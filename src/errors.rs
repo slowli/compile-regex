@@ -65,6 +65,8 @@ pub enum ErrorKind {
     NonAsciiCaptureName,
     UnfinishedGroup,
     NonMatchingGroupEnd,
+
+    AstOverflow,
 }
 
 impl fmt::Display for ErrorKind {
@@ -100,6 +102,7 @@ impl ErrorKind {
             Self::NonAsciiCaptureName => "non-ASCII capture names are not supported",
             Self::UnfinishedGroup => "unfinished group",
             Self::NonMatchingGroupEnd => "non-matching group end",
+            Self::AstOverflow => "too many AST nodes",
         }
     }
 

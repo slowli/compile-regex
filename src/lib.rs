@@ -1,7 +1,12 @@
 use core::ops;
 
-pub use crate::errors::{Error, ErrorKind};
+use crate::ast::GroupName;
+pub use crate::{
+    ast::{Ast, SyntaxSpan, SyntaxSpans},
+    errors::{Error, ErrorKind},
+};
 
+mod ast;
 mod errors;
 #[cfg(test)]
 mod tests;
@@ -83,21 +88,33 @@ const fn is_escapable_char(ch: u8) -> bool {
 }
 
 #[derive(Debug)]
-struct ParseState<'a> {
+struct ParseState<'a, const CAP: usize = 0> {
     /// Always a valid UTF-8 string.
     regex_bytes: &'a [u8],
     pos: usize,
     group_depth: usize,
     is_empty_last_item: bool,
+    spans: Option<SyntaxSpans<CAP>>,
 }
 
 impl<'a> ParseState<'a> {
     const fn new(regex: &'a str) -> Self {
+        Self::custom(regex, false)
+    }
+}
+
+impl<'a, const CAP: usize> ParseState<'a, CAP> {
+    const fn custom(regex: &'a str, with_ast: bool) -> Self {
         Self {
             regex_bytes: regex.as_bytes(),
             pos: 0,
             group_depth: 0,
             is_empty_last_item: true,
+            spans: if with_ast {
+                Some(SyntaxSpans::new())
+            } else {
+                None
+            },
         }
     }
 
@@ -125,6 +142,19 @@ impl<'a> ParseState<'a> {
             self.regex_bytes.len()
         };
         kind.with_position(start..end)
+    }
+
+    const fn push_ast(&mut self, start_pos: usize, node: Ast) -> Result<(), Error> {
+        if let Some(spans) = &mut self.spans {
+            let span = SyntaxSpan {
+                node,
+                range: start_pos..self.pos,
+            };
+            if spans.push(span).is_err() {
+                return Err(self.error(ErrorKind::AstOverflow, start_pos));
+            }
+        }
+        Ok(())
     }
 
     /// Gobbles the provided bytes if they are next. Otherwise, doesn't change the state.
@@ -184,6 +214,7 @@ impl<'a> ParseState<'a> {
     }
 
     const fn parse_uncounted_repetition(&mut self) -> Result<(), Error> {
+        let start_pos = self.pos;
         // `pos` is currently at one of `?`, `*` or `+` (all ASCII chars)
         self.pos += 1;
         if self.is_empty_last_item {
@@ -192,6 +223,7 @@ impl<'a> ParseState<'a> {
         // Parse optional non-greedy marker `?`
         self.gobble(b"?");
 
+        const_try!(self.push_ast(start_pos, Ast::UncountedRepetition));
         Ok(())
     }
 
@@ -223,6 +255,7 @@ impl<'a> ParseState<'a> {
             self.pos += 1;
             // Parse optional non-greedy marker `?`
             self.gobble(b"?");
+            const_try!(self.push_ast(start_pos, Ast::CountedRepetition));
             Ok(())
         } else {
             Err(self.error(ErrorKind::UnfinishedRepetition, start_pos))
@@ -256,8 +289,14 @@ impl<'a> ParseState<'a> {
     const fn parse_primitive(&mut self, ch: char, next_pos: usize) -> Result<(), Error> {
         match ch {
             '\\' => self.parse_escape(),
-            '.' | '^' | '$' => {
+            '.' => {
                 self.pos += 1;
+                const_try!(self.push_ast(self.pos - 1, Ast::Dot));
+                Ok(())
+            }
+            '^' | '$' => {
+                self.pos += 1;
+                const_try!(self.push_ast(self.pos - 1, Ast::LineAssertion));
                 Ok(())
             }
             _ => {
@@ -282,21 +321,33 @@ impl<'a> ParseState<'a> {
             b'0'..=b'9' => {
                 return Err(self.error(ErrorKind::UnsupportedBackref, start_pos));
             }
-            b'x' | b'u' | b'U' => return self.parse_hex_escape(start_pos, current_char),
+            b'x' | b'u' | b'U' => {
+                const_try!(self.parse_hex_escape(start_pos, current_char));
+                const_try!(self.push_ast(start_pos, Ast::HexEscape));
+            }
             b'p' | b'P' => {
                 return Err(self.error(ErrorKind::UnicodeClassesNotSupported, start_pos));
             }
-            b'd' | b's' | b'w' | b'D' | b'S' | b'W' => { /* Perl class */ }
-            b'n' | b't' | b'r' | b'a' | b'f' | b'A' | b'z' | b'B' | b'<' | b'>' => {
-                // special escape or standard assertion
+            b'd' | b's' | b'w' | b'D' | b'S' | b'W' => {
+                const_try!(self.push_ast(start_pos, Ast::PerlClass));
+            }
+            b'n' | b't' | b'r' | b'a' | b'f' | b'v' => {
+                const_try!(self.push_ast(start_pos, Ast::EscapedLiteral));
+            }
+            b'A' | b'z' | b'B' | b'<' | b'>' => {
+                const_try!(self.push_ast(start_pos, Ast::StdAssertion));
             }
             b'b' => {
                 if matches!(self.ascii_char(), Some(b'{')) {
                     return self.try_parse_word_boundary();
                 }
             }
-            ch if is_meta_char(ch) => { /* Escaped meta char */ }
-            ch if is_escapable_char(ch) => { /* Escaped non-meta char */ }
+            ch if is_meta_char(ch) => {
+                const_try!(self.push_ast(start_pos, Ast::EscapedChar { meta: true }));
+            }
+            ch if is_escapable_char(ch) => {
+                const_try!(self.push_ast(start_pos, Ast::EscapedChar { meta: false }));
+            }
             _ => {
                 return Err(self.error(ErrorKind::UnsupportedEscape, start_pos));
             }
@@ -334,7 +385,7 @@ impl<'a> ParseState<'a> {
         }
 
         self.pos = pos;
-        Ok(())
+        self.push_ast(start_pos, Ast::StdAssertion)
     }
 
     /// Parses a hex-escaped char. The parser position is after the marker ('x', 'u' or 'U').
@@ -446,18 +497,24 @@ impl<'a> ParseState<'a> {
             return Err(self.error(ErrorKind::LookaroundNotSupported, start_pos));
         }
 
+        let name_start = self.pos;
         let is_named = self.gobble_any(NAMED_PREFIXES);
-        if is_named {
-            const_try!(self.parse_capture_name());
-        } else if self.regex_bytes[self.pos] == b'?' {
+        let name = if is_named {
+            let start = name_start..self.pos;
+            Some(const_try!(self.parse_capture_name(start)))
+        } else {
+            None
+        };
+        if !is_named && self.regex_bytes[self.pos] == b'?' {
             todo!() // parse flags and the non-capturing marker ':'
-        }
+        };
 
+        const_try!(self.push_ast(start_pos, Ast::GroupStart { name }));
         self.group_depth += 1;
         Ok(())
     }
 
-    const fn parse_capture_name(&mut self) -> Result<(), Error> {
+    const fn parse_capture_name(&mut self, start: ops::Range<usize>) -> Result<GroupName, Error> {
         const fn is_capture_char(ch: u8, is_first: bool) -> bool {
             if is_first {
                 ch == b'_' || ch.is_ascii_alphabetic()
@@ -486,7 +543,11 @@ impl<'a> ParseState<'a> {
         debug_assert!(self.regex_bytes[self.pos] == b'>');
         self.pos += 1;
 
-        Ok(())
+        Ok(GroupName {
+            start,
+            name: start_pos..self.pos - 1,
+            end: self.pos - 1..self.pos,
+        })
     }
 
     const fn end_group(&mut self) -> Result<(), Error> {
@@ -498,7 +559,7 @@ impl<'a> ParseState<'a> {
             return Err(self.error(ErrorKind::NonMatchingGroupEnd, start_pos));
         }
         self.group_depth -= 1;
-        Ok(())
+        self.push_ast(start_pos, Ast::GroupEnd)
     }
 
     const fn step(&mut self) -> Result<ops::ControlFlow<()>, Error> {
@@ -517,6 +578,7 @@ impl<'a> ParseState<'a> {
             '|' => {
                 // Gobble the alteration.
                 self.pos += 1;
+                const_try!(self.push_ast(self.pos - 1, Ast::Alteration));
                 self.is_empty_last_item = true;
             }
             '[' => todo!(),
@@ -539,7 +601,7 @@ impl<'a> ParseState<'a> {
 
 /// Tries to validate the provided regular expression.
 pub const fn try_validate(regex: &str) -> Result<(), Error> {
-    let mut state = ParseState::new(regex);
+    let mut state = <ParseState>::new(regex);
     loop {
         match state.step() {
             Err(err) => return Err(err),
@@ -555,5 +617,29 @@ pub const fn try_validate(regex: &str) -> Result<(), Error> {
 pub const fn validate(regex: &str) {
     if let Err(err) = try_validate(regex) {
         err.compile_panic(regex);
+    }
+}
+
+pub const fn try_parse<const CAP: usize>(regex: &str) -> Result<SyntaxSpans<CAP>, Error> {
+    let mut state = ParseState::custom(regex, true);
+    loop {
+        match state.step() {
+            Err(err) => return Err(err),
+            Ok(ops::ControlFlow::Break(())) => {
+                return match state.spans {
+                    Some(spans) => Ok(spans),
+                    None => panic!("no AST"),
+                }
+            }
+            Ok(ops::ControlFlow::Continue(())) => { /* continue */ }
+        }
+    }
+}
+
+#[track_caller]
+pub const fn parse<const CAP: usize>(regex: &str) -> SyntaxSpans<CAP> {
+    match try_parse(regex) {
+        Ok(spans) => spans,
+        Err(err) => err.compile_panic(regex),
     }
 }
