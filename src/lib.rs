@@ -82,7 +82,7 @@ const fn is_escapable_char(ch: u8) -> bool {
     !matches!(ch, b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'<' | b'>')
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct ParseState<'a> {
     /// Always a valid UTF-8 string.
     regex_bytes: &'a [u8],
@@ -128,7 +128,7 @@ impl<'a> ParseState<'a> {
     }
 
     /// Gobbles the provided bytes if they are next. Otherwise, doesn't change the state.
-    const fn gobble(mut self, bytes: &[u8]) -> (Self, bool) {
+    const fn gobble(&mut self, bytes: &[u8]) -> bool {
         let mut i = 0;
         while i < bytes.len()
             && self.pos + i < self.regex_bytes.len()
@@ -139,23 +139,22 @@ impl<'a> ParseState<'a> {
         if i == bytes.len() {
             // All bytes have matched
             self.pos += bytes.len();
-            (self, true)
+            true
         } else {
-            (self, false)
+            false
         }
     }
 
-    const fn gobble_any(mut self, needles: &[&[u8]]) -> (Self, bool) {
+    const fn gobble_any(&mut self, needles: &[&[u8]]) -> bool {
         let mut i = 0;
         while i < needles.len() {
-            let matched;
-            (self, matched) = self.gobble(needles[i]);
+            let matched = self.gobble(needles[i]);
             if matched {
-                return (self, true);
+                return true;
             }
             i += 1;
         }
-        (self, false)
+        false
     }
 
     const fn matches(&self, range: ops::Range<usize>, needle: &[u8]) -> bool {
@@ -184,19 +183,19 @@ impl<'a> ParseState<'a> {
         false
     }
 
-    const fn parse_uncounted_repetition(mut self) -> Result<Self, Error> {
+    const fn parse_uncounted_repetition(&mut self) -> Result<(), Error> {
         // `pos` is currently at one of `?`, `*` or `+` (all ASCII chars)
         self.pos += 1;
         if self.is_empty_last_item {
             return Err(self.error(ErrorKind::MissingRepetition, self.pos - 1));
         }
         // Parse optional non-greedy marker `?`
-        (self, _) = self.gobble(b"?");
+        self.gobble(b"?");
 
-        Ok(self)
+        Ok(())
     }
 
-    const fn parse_counted_repetition(mut self) -> Result<Self, Error> {
+    const fn parse_counted_repetition(&mut self) -> Result<(), Error> {
         let start_pos = self.pos;
         debug_assert!(self.regex_bytes[self.pos] == b'{');
         self.pos += 1; // gobble '{'
@@ -205,8 +204,7 @@ impl<'a> ParseState<'a> {
             return Err(self.error(ErrorKind::MissingRepetition, start_pos));
         }
         // Minimum or exact count
-        let min_count;
-        (self, min_count) = const_try!(self.parse_decimal());
+        let min_count = const_try!(self.parse_decimal());
 
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
@@ -215,8 +213,7 @@ impl<'a> ParseState<'a> {
         if current_char == b',' {
             self.pos += 1;
             // Maximum count
-            let max_count;
-            (self, max_count) = const_try!(self.parse_decimal());
+            let max_count = const_try!(self.parse_decimal());
             if max_count < min_count {
                 return Err(self.error(ErrorKind::InvalidRepetitionRange, start_pos));
             }
@@ -225,14 +222,14 @@ impl<'a> ParseState<'a> {
         if matches!(self.ascii_char(), Some(b'}')) {
             self.pos += 1;
             // Parse optional non-greedy marker `?`
-            (self, _) = self.gobble(b"?");
-            Ok(self)
+            self.gobble(b"?");
+            Ok(())
         } else {
             Err(self.error(ErrorKind::UnfinishedRepetition, start_pos))
         }
     }
 
-    const fn parse_decimal(mut self) -> Result<(Self, u32), Error> {
+    const fn parse_decimal(&mut self) -> Result<u32, Error> {
         let start_pos = self.pos;
         let mut pos = self.pos;
         let mut decimal = 0_u32;
@@ -252,25 +249,25 @@ impl<'a> ParseState<'a> {
             Err(self.error(ErrorKind::EmptyDecimal, start_pos))
         } else {
             self.pos = pos;
-            Ok((self, decimal))
+            Ok(decimal)
         }
     }
 
-    const fn parse_primitive(mut self, ch: char, next_pos: usize) -> Result<Self, Error> {
+    const fn parse_primitive(&mut self, ch: char, next_pos: usize) -> Result<(), Error> {
         match ch {
             '\\' => self.parse_escape(),
             '.' | '^' | '$' => {
                 self.pos += 1;
-                Ok(self)
+                Ok(())
             }
             _ => {
                 self.pos = next_pos;
-                Ok(self)
+                Ok(())
             }
         }
     }
 
-    const fn parse_escape(mut self) -> Result<Self, Error> {
+    const fn parse_escape(&mut self) -> Result<(), Error> {
         let start_pos = self.pos;
         self.pos += 1;
 
@@ -305,10 +302,10 @@ impl<'a> ParseState<'a> {
             }
         }
 
-        Ok(self)
+        Ok(())
     }
 
-    const fn try_parse_word_boundary(mut self) -> Result<Self, Error> {
+    const fn try_parse_word_boundary(&mut self) -> Result<(), Error> {
         const fn is_valid_char(ch: u8) -> bool {
             matches!(ch, b'A'..=b'Z' | b'a'..=b'z' | b'-')
         }
@@ -321,7 +318,7 @@ impl<'a> ParseState<'a> {
             return Err(self.error(ErrorKind::UnfinishedWordBoundary, start_pos));
         }
         if !is_valid_char(self.regex_bytes[pos]) {
-            return Ok(self); // not a word boundary specifier
+            return Ok(()); // not a word boundary specifier
         }
 
         while pos < self.regex_bytes.len() && is_valid_char(self.regex_bytes[pos]) {
@@ -337,11 +334,11 @@ impl<'a> ParseState<'a> {
         }
 
         self.pos = pos;
-        Ok(self)
+        Ok(())
     }
 
     /// Parses a hex-escaped char. The parser position is after the marker ('x', 'u' or 'U').
-    const fn parse_hex_escape(self, start_pos: usize, marker_ch: u8) -> Result<Self, Error> {
+    const fn parse_hex_escape(&mut self, start_pos: usize, marker_ch: u8) -> Result<(), Error> {
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
             None => return Err(self.error(ErrorKind::UnfinishedEscape, start_pos)),
@@ -360,7 +357,7 @@ impl<'a> ParseState<'a> {
         }
     }
 
-    const fn parse_hex_brace(mut self, start_pos: usize) -> Result<Self, Error> {
+    const fn parse_hex_brace(&mut self, start_pos: usize) -> Result<(), Error> {
         self.pos += 1; // gobble '{'
 
         let first_digit_pos = self.pos;
@@ -394,14 +391,14 @@ impl<'a> ParseState<'a> {
         } else if char::from_u32(hex).is_none() {
             return Err(self.error(ErrorKind::NonUnicodeHex, start_pos));
         }
-        Ok(self)
+        Ok(())
     }
 
     const fn parse_hex_digits(
-        mut self,
+        &mut self,
         start_pos: usize,
         expected_digits: usize,
-    ) -> Result<Self, Error> {
+    ) -> Result<(), Error> {
         let first_digit_pos = self.pos;
         let mut hex = 0_u32;
         while self.pos - first_digit_pos < expected_digits {
@@ -424,14 +421,14 @@ impl<'a> ParseState<'a> {
         if char::from_u32(hex).is_none() {
             return Err(self.error(ErrorKind::NonUnicodeHex, start_pos));
         }
-        Ok(self)
+        Ok(())
     }
 
     const fn is_eof(&self) -> bool {
         self.pos == self.regex_bytes.len()
     }
 
-    const fn parse_group_start(mut self) -> Result<Self, Error> {
+    const fn parse_group_start(&mut self) -> Result<(), Error> {
         const LOOKAROUND_PREFIXES: &[&[u8]] = &[b"?=", b"?!", b"?<=", b"?<!"];
         const NAMED_PREFIXES: &[&[u8]] = &[b"?P<", b"?<"];
 
@@ -444,25 +441,23 @@ impl<'a> ParseState<'a> {
             return Err(self.error(ErrorKind::UnfinishedGroup, start_pos));
         }
 
-        let is_lookaround;
-        (self, is_lookaround) = self.gobble_any(LOOKAROUND_PREFIXES);
+        let is_lookaround = self.gobble_any(LOOKAROUND_PREFIXES);
         if is_lookaround {
             return Err(self.error(ErrorKind::LookaroundNotSupported, start_pos));
         }
 
-        let is_named;
-        (self, is_named) = self.gobble_any(NAMED_PREFIXES);
+        let is_named = self.gobble_any(NAMED_PREFIXES);
         if is_named {
-            self = const_try!(self.parse_capture_name());
+            const_try!(self.parse_capture_name());
         } else if self.regex_bytes[self.pos] == b'?' {
             todo!() // parse flags and the non-capturing marker ':'
         }
 
         self.group_depth += 1;
-        Ok(self)
+        Ok(())
     }
 
-    const fn parse_capture_name(mut self) -> Result<Self, Error> {
+    const fn parse_capture_name(&mut self) -> Result<(), Error> {
         const fn is_capture_char(ch: u8, is_first: bool) -> bool {
             if is_first {
                 ch == b'_' || ch.is_ascii_alphabetic()
@@ -491,10 +486,10 @@ impl<'a> ParseState<'a> {
         debug_assert!(self.regex_bytes[self.pos] == b'>');
         self.pos += 1;
 
-        Ok(self)
+        Ok(())
     }
 
-    const fn end_group(mut self) -> Result<Self, Error> {
+    const fn end_group(&mut self) -> Result<(), Error> {
         let start_pos = self.pos;
         debug_assert!(self.regex_bytes[self.pos] == b')');
         self.pos += 1;
@@ -503,20 +498,20 @@ impl<'a> ParseState<'a> {
             return Err(self.error(ErrorKind::NonMatchingGroup, start_pos));
         }
         self.group_depth -= 1;
-        Ok(self)
+        Ok(())
     }
 
-    const fn step(mut self) -> Result<Option<Self>, Error> {
+    const fn step(&mut self) -> Result<ops::ControlFlow<()>, Error> {
         let Some((current_ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
-            return Ok(None);
+            return Ok(ops::ControlFlow::Break(()));
         };
         match current_ch {
             '(' => {
-                self = const_try!(self.parse_group_start());
+                const_try!(self.parse_group_start());
                 self.is_empty_last_item = true;
             }
             ')' => {
-                self = const_try!(self.end_group());
+                const_try!(self.end_group());
                 self.is_empty_last_item = false;
             }
             '|' => {
@@ -526,19 +521,19 @@ impl<'a> ParseState<'a> {
             }
             '[' => todo!(),
             '?' | '*' | '+' => {
-                self = const_try!(self.parse_uncounted_repetition());
+                const_try!(self.parse_uncounted_repetition());
                 self.is_empty_last_item = false;
             }
             '{' => {
-                self = const_try!(self.parse_counted_repetition());
+                const_try!(self.parse_counted_repetition());
                 self.is_empty_last_item = false;
             }
             _ => {
-                self = const_try!(self.parse_primitive(current_ch, next_pos));
+                const_try!(self.parse_primitive(current_ch, next_pos));
                 self.is_empty_last_item = false;
             }
         }
-        Ok(Some(self))
+        Ok(ops::ControlFlow::Continue(()))
     }
 }
 
@@ -548,10 +543,8 @@ pub const fn try_validate(regex: &str) -> Result<(), Error> {
     loop {
         match state.step() {
             Err(err) => return Err(err),
-            Ok(None) => break,
-            Ok(Some(new_state)) => {
-                state = new_state;
-            }
+            Ok(ops::ControlFlow::Break(())) => break,
+            Ok(ops::ControlFlow::Continue(())) => { /* continue */ }
         }
     }
 
