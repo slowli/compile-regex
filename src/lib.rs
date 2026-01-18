@@ -1,8 +1,7 @@
 use core::ops;
 
-use crate::ast::GroupName;
 pub use crate::{
-    ast::{Ast, SyntaxSpan, SyntaxSpans},
+    ast::{Ast, GroupName, Range, SyntaxSpan, SyntaxSpans},
     errors::{Error, ErrorKind},
 };
 
@@ -148,7 +147,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         if let Some(spans) = &mut self.spans {
             let span = SyntaxSpan {
                 node,
-                range: start_pos..self.pos,
+                range: Range::new(start_pos, self.pos),
             };
             if spans.push(span).is_err() {
                 return Err(self.error(ErrorKind::AstOverflow, start_pos));
@@ -236,33 +235,42 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             return Err(self.error(ErrorKind::MissingRepetition, start_pos));
         }
         // Minimum or exact count
-        let min_count = const_try!(self.parse_decimal());
+        let (min_count, min_count_span) = const_try!(self.parse_decimal());
 
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
             None => return Err(self.error(ErrorKind::UnfinishedRepetition, start_pos)),
         };
-        if current_char == b',' {
+        let max_count_span = if current_char == b',' {
             self.pos += 1;
             // Maximum count
-            let max_count = const_try!(self.parse_decimal());
+            let (max_count, max_count_span) = const_try!(self.parse_decimal());
             if max_count < min_count {
                 return Err(self.error(ErrorKind::InvalidRepetitionRange, start_pos));
             }
-        }
+            Some(max_count_span)
+        } else {
+            None
+        };
 
         if matches!(self.ascii_char(), Some(b'}')) {
             self.pos += 1;
             // Parse optional non-greedy marker `?`
             self.gobble(b"?");
-            const_try!(self.push_ast(start_pos, Ast::CountedRepetition));
+            const_try!(self.push_ast(
+                start_pos,
+                Ast::CountedRepetition {
+                    min_or_exact_count: min_count_span,
+                    max_count: max_count_span,
+                }
+            ));
             Ok(())
         } else {
             Err(self.error(ErrorKind::UnfinishedRepetition, start_pos))
         }
     }
 
-    const fn parse_decimal(&mut self) -> Result<u32, Error> {
+    const fn parse_decimal(&mut self) -> Result<(u32, Range), Error> {
         let start_pos = self.pos;
         let mut pos = self.pos;
         let mut decimal = 0_u32;
@@ -282,7 +290,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             Err(self.error(ErrorKind::EmptyDecimal, start_pos))
         } else {
             self.pos = pos;
-            Ok(decimal)
+            Ok((decimal, Range::new(start_pos, pos)))
         }
     }
 
@@ -500,7 +508,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         let name_start = self.pos;
         let is_named = self.gobble_any(NAMED_PREFIXES);
         let name = if is_named {
-            let start = name_start..self.pos;
+            let start = Range::new(name_start, self.pos);
             Some(const_try!(self.parse_capture_name(start)))
         } else {
             None
@@ -514,7 +522,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         Ok(())
     }
 
-    const fn parse_capture_name(&mut self, start: ops::Range<usize>) -> Result<GroupName, Error> {
+    const fn parse_capture_name(&mut self, start: Range) -> Result<GroupName, Error> {
         const fn is_capture_char(ch: u8, is_first: bool) -> bool {
             if is_first {
                 ch == b'_' || ch.is_ascii_alphabetic()
@@ -545,8 +553,8 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         Ok(GroupName {
             start,
-            name: start_pos..self.pos - 1,
-            end: self.pos - 1..self.pos,
+            name: Range::new(start_pos, self.pos - 1),
+            end: Range::new(self.pos - 1, self.pos),
         })
     }
 

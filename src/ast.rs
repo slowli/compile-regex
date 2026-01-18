@@ -2,7 +2,33 @@
 
 use core::{fmt, ops};
 
-#[derive(Debug)]
+/// Range of chars. Similar to `Range<usize>`, but implements `Copy`.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Range {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl fmt::Debug for Range {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}..{}", self.start, self.end)
+    }
+}
+
+impl From<Range> for ops::Range<usize> {
+    fn from(range: Range) -> Self {
+        range.start..range.end
+    }
+}
+
+impl Range {
+    pub(crate) const fn new(start: usize, end: usize) -> Self {
+        assert!(start <= end);
+        Self { start, end }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum Ast {
     /// `.`
@@ -23,7 +49,10 @@ pub enum Ast {
     /// Uncounted repetition, like `*`, `+` or `?`, with an optional non-greedy marker.
     UncountedRepetition,
     /// Counted repetition, like `{3}` or `{3,5}`, with an optional non-greedy marker.
-    CountedRepetition,
+    CountedRepetition {
+        min_or_exact_count: Range,
+        max_count: Option<Range>,
+    },
     /// Hexadecimal escape, like `\x0C` or `\u{123}`.
     HexEscape,
 
@@ -38,27 +67,27 @@ pub enum Ast {
     GroupEnd,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GroupName {
     /// Span of the start marker, i.e., `?<` or `?P<`.
-    pub start: ops::Range<usize>,
+    pub start: Range,
     /// Span of the name.
-    pub name: ops::Range<usize>,
+    pub name: Range,
     /// Position of the end marker, i.e. `>`.
-    pub end: ops::Range<usize>,
+    pub end: Range,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct SyntaxSpan {
     pub node: Ast,
-    pub range: ops::Range<usize>,
+    pub range: Range,
 }
 
 impl SyntaxSpan {
     const DUMMY: Self = Self {
         node: Ast::Dot,
-        range: 0..0,
+        range: Range { start: 0, end: 0 },
     };
 }
 

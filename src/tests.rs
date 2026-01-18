@@ -2,6 +2,57 @@ use assert_matches::assert_matches;
 
 use super::*;
 
+impl From<ops::Range<usize>> for Range {
+    fn from(range: ops::Range<usize>) -> Self {
+        Self::new(range.start, range.end)
+    }
+}
+
+fn span(range: ops::Range<usize>, node: Ast) -> SyntaxSpan {
+    SyntaxSpan {
+        range: range.into(),
+        node,
+    }
+}
+
+#[test]
+fn parsing_ast() {
+    const AST: SyntaxSpans = parse(r"^wh\x40t(?<group>\t|\.\>){3,5}?\d+$");
+
+    assert_eq!(
+        AST.spans(),
+        &[
+            span(0..1, Ast::LineAssertion),
+            span(3..7, Ast::HexEscape),
+            span(
+                8..17,
+                Ast::GroupStart {
+                    name: Some(GroupName {
+                        start: (9..11).into(),
+                        name: (11..16).into(),
+                        end: (16..17).into(),
+                    }),
+                }
+            ),
+            span(17..19, Ast::EscapedLiteral),
+            span(19..20, Ast::Alteration),
+            span(20..22, Ast::EscapedChar { meta: true }),
+            span(22..24, Ast::StdAssertion),
+            span(24..25, Ast::GroupEnd),
+            span(
+                25..31,
+                Ast::CountedRepetition {
+                    min_or_exact_count: (26..27).into(),
+                    max_count: Some((28..29).into()),
+                }
+            ),
+            span(31..33, Ast::PerlClass),
+            span(33..34, Ast::UncountedRepetition),
+            span(34..35, Ast::LineAssertion),
+        ]
+    );
+}
+
 #[test]
 fn parsing_uncounted_repetition() {
     let repetitions = ["a*", "a+", "a?", "a*?", "a??", "a+?"];
