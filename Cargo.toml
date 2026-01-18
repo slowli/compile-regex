@@ -9,6 +9,9 @@ readme = "README.md"
 description = "Compile-time regular expression validation"
 repository = "https://github.com/slowli/compile-regex"
 
+[dependencies]
+compile-fmt = "0.1.0"
+
 [dev-dependencies]
 assert_matches = "1.5.0"
 regex-syntax = "0.8.8"

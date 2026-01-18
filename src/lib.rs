@@ -495,7 +495,7 @@ impl<'a> ParseState<'a> {
         self.pos += 1;
 
         if self.group_depth == 0 {
-            return Err(self.error(ErrorKind::NonMatchingGroup, start_pos));
+            return Err(self.error(ErrorKind::NonMatchingGroupEnd, start_pos));
         }
         self.group_depth -= 1;
         Ok(())
@@ -549,4 +549,11 @@ pub const fn try_validate(regex: &str) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[track_caller]
+pub const fn validate(regex: &str) {
+    if let Err(err) = try_validate(regex) {
+        err.compile_panic(regex);
+    }
 }
