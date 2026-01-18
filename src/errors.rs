@@ -65,6 +65,10 @@ pub enum ErrorKind {
     NonAsciiCaptureName,
     UnfinishedGroup,
     NonMatchingGroupEnd,
+    UnfinishedSet,
+    InvalidRangeStart,
+    InvalidRangeEnd,
+    InvalidRange,
 
     AstOverflow,
 }
@@ -102,6 +106,10 @@ impl ErrorKind {
             Self::NonAsciiCaptureName => "non-ASCII capture names are not supported",
             Self::UnfinishedGroup => "unfinished group",
             Self::NonMatchingGroupEnd => "non-matching group end",
+            Self::UnfinishedSet => "unfinished set",
+            Self::InvalidRangeStart => "invalid range start",
+            Self::InvalidRangeEnd => "invalid range end",
+            Self::InvalidRange => "invalid range",
             Self::AstOverflow => "too many AST nodes",
         }
     }

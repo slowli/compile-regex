@@ -87,6 +87,12 @@ const fn is_escapable_char(ch: u8) -> bool {
 }
 
 #[derive(Debug)]
+enum PrimitiveKind {
+    Literal(char),
+    NotLiteral,
+}
+
+#[derive(Debug)]
 struct ParseState<'a, const CAP: usize = 0> {
     /// Always a valid UTF-8 string.
     regex_bytes: &'a [u8],
@@ -190,7 +196,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         if range.end - range.start != needle.len() {
             return false;
         }
-        if range.end >= self.regex_bytes.len() {
+        if range.end > self.regex_bytes.len() {
             return false;
         }
 
@@ -296,7 +302,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
     const fn parse_primitive(&mut self, ch: char, next_pos: usize) -> Result<(), Error> {
         match ch {
-            '\\' => self.parse_escape(),
+            '\\' => {
+                const_try!(self.parse_escape());
+                Ok(())
+            }
             '.' => {
                 self.pos += 1;
                 const_try!(self.push_ast(self.pos - 1, Ast::Dot));
@@ -314,8 +323,9 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
     }
 
-    const fn parse_escape(&mut self) -> Result<(), Error> {
+    const fn parse_escape(&mut self) -> Result<PrimitiveKind, Error> {
         let start_pos = self.pos;
+        debug_assert!(self.regex_bytes[self.pos] == b'\\');
         self.pos += 1;
 
         let current_char = match self.ascii_char() {
@@ -326,42 +336,63 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.pos += 1;
 
         match current_char {
-            b'0'..=b'9' => {
-                return Err(self.error(ErrorKind::UnsupportedBackref, start_pos));
-            }
+            b'0'..=b'9' => Err(self.error(ErrorKind::UnsupportedBackref, start_pos)),
             b'x' | b'u' | b'U' => {
-                const_try!(self.parse_hex_escape(start_pos, current_char));
+                let ch = const_try!(self.parse_hex_escape(start_pos, current_char));
                 const_try!(self.push_ast(start_pos, Ast::HexEscape));
+                Ok(PrimitiveKind::Literal(ch))
             }
-            b'p' | b'P' => {
-                return Err(self.error(ErrorKind::UnicodeClassesNotSupported, start_pos));
-            }
+            b'p' | b'P' => Err(self.error(ErrorKind::UnicodeClassesNotSupported, start_pos)),
             b'd' | b's' | b'w' | b'D' | b'S' | b'W' => {
                 const_try!(self.push_ast(start_pos, Ast::PerlClass));
+                Ok(PrimitiveKind::NotLiteral)
             }
-            b'n' | b't' | b'r' | b'a' | b'f' | b'v' => {
+
+            b'n' => {
                 const_try!(self.push_ast(start_pos, Ast::EscapedLiteral));
+                Ok(PrimitiveKind::Literal('\n'))
             }
+            b't' => {
+                const_try!(self.push_ast(start_pos, Ast::EscapedLiteral));
+                Ok(PrimitiveKind::Literal('\t'))
+            }
+            b'r' => {
+                const_try!(self.push_ast(start_pos, Ast::EscapedLiteral));
+                Ok(PrimitiveKind::Literal('\r'))
+            }
+            b'a' => {
+                const_try!(self.push_ast(start_pos, Ast::EscapedLiteral));
+                Ok(PrimitiveKind::Literal('\x07'))
+            }
+            b'f' => {
+                const_try!(self.push_ast(start_pos, Ast::EscapedLiteral));
+                Ok(PrimitiveKind::Literal('\x0C'))
+            }
+            b'v' => {
+                const_try!(self.push_ast(start_pos, Ast::EscapedLiteral));
+                Ok(PrimitiveKind::Literal('\x0B'))
+            }
+
             b'A' | b'z' | b'B' | b'<' | b'>' => {
                 const_try!(self.push_ast(start_pos, Ast::StdAssertion));
+                Ok(PrimitiveKind::NotLiteral)
             }
             b'b' => {
                 if matches!(self.ascii_char(), Some(b'{')) {
-                    return self.try_parse_word_boundary();
+                    const_try!(self.try_parse_word_boundary());
                 }
+                Ok(PrimitiveKind::NotLiteral)
             }
             ch if is_meta_char(ch) => {
                 const_try!(self.push_ast(start_pos, Ast::EscapedChar { meta: true }));
+                Ok(PrimitiveKind::Literal(ch as char))
             }
             ch if is_escapable_char(ch) => {
                 const_try!(self.push_ast(start_pos, Ast::EscapedChar { meta: false }));
+                Ok(PrimitiveKind::Literal(ch as char))
             }
-            _ => {
-                return Err(self.error(ErrorKind::UnsupportedEscape, start_pos));
-            }
+            _ => Err(self.error(ErrorKind::UnsupportedEscape, start_pos)),
         }
-
-        Ok(())
     }
 
     const fn try_parse_word_boundary(&mut self) -> Result<(), Error> {
@@ -397,7 +428,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
     }
 
     /// Parses a hex-escaped char. The parser position is after the marker ('x', 'u' or 'U').
-    const fn parse_hex_escape(&mut self, start_pos: usize, marker_ch: u8) -> Result<(), Error> {
+    const fn parse_hex_escape(&mut self, start_pos: usize, marker_ch: u8) -> Result<char, Error> {
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
             None => return Err(self.error(ErrorKind::UnfinishedEscape, start_pos)),
@@ -416,7 +447,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
     }
 
-    const fn parse_hex_brace(&mut self, start_pos: usize) -> Result<(), Error> {
+    const fn parse_hex_brace(&mut self, start_pos: usize) -> Result<char, Error> {
         self.pos += 1; // gobble '{'
 
         let first_digit_pos = self.pos;
@@ -446,18 +477,20 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.pos += 1;
 
         if self.pos == first_digit_pos + 1 {
-            return Err(self.error(ErrorKind::EmptyHex, start_pos));
-        } else if char::from_u32(hex).is_none() {
-            return Err(self.error(ErrorKind::NonUnicodeHex, start_pos));
+            Err(self.error(ErrorKind::EmptyHex, start_pos))
+        } else {
+            match char::from_u32(hex) {
+                Some(ch) => Ok(ch),
+                None => Err(self.error(ErrorKind::NonUnicodeHex, start_pos)),
+            }
         }
-        Ok(())
     }
 
     const fn parse_hex_digits(
         &mut self,
         start_pos: usize,
         expected_digits: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<char, Error> {
         let first_digit_pos = self.pos;
         let mut hex = 0_u32;
         while self.pos - first_digit_pos < expected_digits {
@@ -477,10 +510,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             hex = hex * 16 + digit as u32;
         }
 
-        if char::from_u32(hex).is_none() {
-            return Err(self.error(ErrorKind::NonUnicodeHex, start_pos));
+        match char::from_u32(hex) {
+            Some(ch) => Ok(ch),
+            None => Err(self.error(ErrorKind::NonUnicodeHex, start_pos)),
         }
-        Ok(())
     }
 
     const fn is_eof(&self) -> bool {
@@ -570,6 +603,156 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.push_ast(start_pos, Ast::GroupEnd)
     }
 
+    const fn parse_set_class(&mut self) -> Result<(), Error> {
+        const_try!(self.parse_set_class_start());
+
+        let mut set_depth = 1;
+        while set_depth > 0 {
+            if self.is_eof() {
+                return Err(self.error(ErrorKind::UnfinishedSet, self.pos));
+            }
+
+            let op_start = self.pos;
+            if self.gobble_any(&[b"&&", b"--", b"~~"]) {
+                const_try!(self.push_ast(op_start, Ast::SetOp));
+                continue;
+            }
+
+            let ch = self.regex_bytes[self.pos];
+            match ch {
+                b'[' => {
+                    // Try parse the ASCII char class first. If that fails, treat it as an embedded class.
+                    if self.try_parse_ascii_class() {
+                        const_try!(self.push_ast(op_start, Ast::AsciiClass));
+                    } else {
+                        self.pos = op_start; // Restore the parser position
+                        const_try!(self.parse_set_class_start());
+                        set_depth += 1;
+                    }
+                }
+                b']' => {
+                    self.pos += 1;
+                    const_try!(self.push_ast(op_start, Ast::SetEnd));
+                    set_depth -= 1;
+                }
+                _ => const_try!(self.parse_set_class_range()),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parses the start of the set class, including the opening `[` and any specially handled chars
+    /// (`^`, `-` and `]`).
+    const fn parse_set_class_start(&mut self) -> Result<(), Error> {
+        let start_pos = self.pos;
+        debug_assert!(self.regex_bytes[self.pos] == b'[');
+        self.pos += 1;
+
+        if self.is_eof() {
+            return Err(self.error(ErrorKind::UnfinishedSet, start_pos));
+        }
+
+        let negation = if self.regex_bytes[self.pos] == b'^' {
+            self.pos += 1;
+            if self.is_eof() {
+                return Err(self.error(ErrorKind::UnfinishedSet, start_pos));
+            }
+            Some(Range::new(self.pos - 1, self.pos))
+        } else {
+            None
+        };
+        const_try!(self.push_ast(start_pos, Ast::SetStart { negation }));
+
+        if self.regex_bytes[self.pos] == b']' {
+            // Literal ']'
+            self.pos += 1;
+        } else {
+            // Any amount of literal '-'
+            while !self.is_eof() && self.regex_bytes[self.pos] == b'-' {
+                self.pos += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Parses an ASCII char class, e.g., `[:alnum:]`. If successful, advances the parser beyond the closing `]`.
+    ///
+    /// **Important.** The caller is responsible for rewinding the parser position if `Ok(false)` is returned.
+    const fn try_parse_ascii_class(&mut self) -> bool {
+        const CLASSES: &[&[u8]] = &[b"alnum", b"alpha", b"ascii", b"blank", b"cntrl", b"digit"];
+
+        debug_assert!(self.regex_bytes[self.pos] == b'[');
+        self.pos += 1;
+
+        if self.is_eof() || self.regex_bytes[self.pos] != b':' {
+            return false;
+        }
+
+        self.pos += 1;
+        if self.is_eof() {
+            return false;
+        }
+        if self.regex_bytes[self.pos] == b'^' {
+            self.pos += 1;
+            if self.is_eof() {
+                return false;
+            }
+        }
+
+        let is_known_class = self.gobble_any(CLASSES);
+        // ^ Immediately rewind the parse position so we don't forget about it.
+        if !is_known_class {
+            return false;
+        }
+
+        !self.is_eof() && self.gobble(b":]")
+    }
+
+    const fn parse_set_class_range(&mut self) -> Result<(), Error> {
+        let start_pos = self.pos;
+        let start_item = const_try!(self.parse_set_class_item());
+        if self.is_eof() {
+            return Err(self.error(ErrorKind::UnfinishedSet, self.pos));
+        }
+
+        let ch = self.regex_bytes[self.pos];
+        if ch != b'-' || self.matches_any(self.pos..self.pos + 2, &[b"-]", b"--"]) {
+            // Not a range; we're done.
+            return Ok(());
+        }
+
+        let PrimitiveKind::Literal(range_start) = start_item else {
+            return Err(self.error(ErrorKind::InvalidRangeStart, start_pos));
+        };
+
+        debug_assert!(ch == b'-');
+        self.pos += 1;
+        const_try!(self.push_ast(self.pos - 1, Ast::SetRange));
+
+        let end_start_pos = self.pos;
+        let PrimitiveKind::Literal(range_end) = const_try!(self.parse_set_class_item()) else {
+            return Err(self.error(ErrorKind::InvalidRangeEnd, end_start_pos));
+        };
+
+        if range_start > range_end {
+            return Err(self.error(ErrorKind::InvalidRange, start_pos));
+        }
+        Ok(())
+    }
+
+    const fn parse_set_class_item(&mut self) -> Result<PrimitiveKind, Error> {
+        let Some((ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
+            return Err(self.error(ErrorKind::UnfinishedSet, self.pos));
+        };
+        if ch == '\\' {
+            self.parse_escape()
+        } else {
+            self.pos = next_pos;
+            Ok(PrimitiveKind::Literal(ch))
+        }
+    }
+
     const fn step(&mut self) -> Result<ops::ControlFlow<()>, Error> {
         let Some((current_ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
             return Ok(ops::ControlFlow::Break(()));
@@ -589,7 +772,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 const_try!(self.push_ast(self.pos - 1, Ast::Alteration));
                 self.is_empty_last_item = true;
             }
-            '[' => todo!(),
+            '[' => {
+                const_try!(self.parse_set_class());
+                self.is_empty_last_item = false;
+            }
             '?' | '*' | '+' => {
                 const_try!(self.parse_uncounted_repetition());
                 self.is_empty_last_item = false;

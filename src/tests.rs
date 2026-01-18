@@ -267,3 +267,77 @@ fn parsing_group() {
     assert_matches!(err.kind(), ErrorKind::UnfinishedCaptureName);
     assert_eq!(err.pos(), 3..7);
 }
+
+#[test]
+fn parsing_set() {
+    let simple_sets = ["[]]", "[^]]", "[abc]", "[a-z]", "[A-Za-z-]", r"[\t\.]"];
+    for set in simple_sets {
+        println!("Testing {set}");
+        let mut state = ParseState::new(set);
+        assert!(state.step().unwrap().is_continue());
+        assert_eq!(state.pos, set.len());
+    }
+
+    let mut state = ParseState::new("[]");
+    let err = state.step().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::UnfinishedSet);
+
+    let mut state = ParseState::new(r"[\>-a]");
+    let err = state.step().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::InvalidRangeStart);
+    assert_eq!(err.pos(), 1..3);
+
+    let mut state = ParseState::new(r"[a-\>]");
+    let err = state.step().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::InvalidRangeEnd);
+    assert_eq!(err.pos(), 3..5);
+
+    let mut state = ParseState::new(r"[_a-Z]");
+    let err = state.step().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::InvalidRange);
+    assert_eq!(err.pos(), 2..5);
+}
+
+#[test]
+fn parsing_set_ast() {
+    let ast: SyntaxSpans = parse(r"[[^ab]~~\t]");
+    assert_eq!(
+        ast.spans(),
+        [
+            span(0..1, Ast::SetStart { negation: None }),
+            span(
+                1..3,
+                Ast::SetStart {
+                    negation: Some((2..3).into())
+                }
+            ),
+            span(5..6, Ast::SetEnd),
+            span(6..8, Ast::SetOp),
+            span(8..10, Ast::EscapedLiteral),
+            span(10..11, Ast::SetEnd),
+        ]
+    );
+
+    let ast: SyntaxSpans = parse(r"[[:digit:]&&[:^cntrl:]-]");
+    assert_eq!(
+        ast.spans(),
+        [
+            span(0..1, Ast::SetStart { negation: None }),
+            span(1..10, Ast::AsciiClass),
+            span(10..12, Ast::SetOp),
+            span(12..22, Ast::AsciiClass),
+            span(23..24, Ast::SetEnd),
+        ]
+    );
+
+    let ast: SyntaxSpans = parse(r"[0-9--4-]");
+    assert_eq!(
+        ast.spans(),
+        [
+            span(0..1, Ast::SetStart { negation: None }),
+            span(2..3, Ast::SetRange),
+            span(4..6, Ast::SetOp),
+            span(8..9, Ast::SetEnd),
+        ]
+    );
+}

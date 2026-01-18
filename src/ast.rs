@@ -65,6 +65,16 @@ pub enum Ast {
     },
     /// Group end `)`.
     GroupEnd,
+    /// Set start `[`.
+    SetStart { negation: Option<Range> },
+    /// Set end `]`.
+    SetEnd,
+    /// Set operation: `&&`, `--` or `~~`.
+    SetOp,
+    /// Set range char: `-`.
+    SetRange,
+    /// ASCII char class, e.g., `[:alnum:]`.
+    AsciiClass,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
