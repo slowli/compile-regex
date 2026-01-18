@@ -1,0 +1,14 @@
+[package]
+name = "compile-regex"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.67"
+authors = ["Alex Ostrovski <ostrovski.alex@gmail.com>"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+description = "Compile-time regular expression validation"
+repository = "https://github.com/slowli/compile-regex"
+
+[dev-dependencies]
+assert_matches = "1.5.0"
+regex-syntax = "0.8.8"
