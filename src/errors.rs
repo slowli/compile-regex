@@ -69,6 +69,11 @@ pub enum ErrorKind {
     InvalidRangeStart,
     InvalidRangeEnd,
     InvalidRange,
+    UnfinishedFlags,
+    UnfinishedFlagsNegation,
+    RepeatedFlagNegation,
+    UnsupportedFlag,
+    RepeatedFlag { contradicting: bool },
 
     AstOverflow,
 }
@@ -110,6 +115,16 @@ impl ErrorKind {
             Self::InvalidRangeStart => "invalid range start",
             Self::InvalidRangeEnd => "invalid range end",
             Self::InvalidRange => "invalid range",
+            Self::UnfinishedFlags => "unfinished flags",
+            Self::UnfinishedFlagsNegation => "unfinished flags negation",
+            Self::RepeatedFlagNegation => "repeated flag negation",
+            Self::UnsupportedFlag => "unsupported flag",
+            Self::RepeatedFlag {
+                contradicting: true,
+            } => "contradicting flag value",
+            Self::RepeatedFlag {
+                contradicting: false,
+            } => "repeated flag value",
             Self::AstOverflow => "too many AST nodes",
         }
     }

@@ -32,6 +32,7 @@ fn parsing_ast() {
                         name: (11..16).into(),
                         end: (16..17).into(),
                     }),
+                    flags: None,
                 }
             ),
             span(17..19, Ast::EscapedLiteral),
@@ -269,6 +270,16 @@ fn parsing_group() {
 }
 
 #[test]
+fn unfinished_group_errors() {
+    let unfinished_groups = ["(a", "((a+)", "((ab)c+"];
+    for regex in unfinished_groups {
+        let err = try_validate(regex).unwrap_err();
+        assert_matches!(err.kind(), ErrorKind::UnfinishedGroup);
+        assert_eq!(err.pos(), regex.len()..regex.len());
+    }
+}
+
+#[test]
 fn parsing_set() {
     let simple_sets = ["[]]", "[^]]", "[abc]", "[a-z]", "[A-Za-z-]", r"[\t\.]"];
     for set in simple_sets {
@@ -338,6 +349,98 @@ fn parsing_set_ast() {
             span(2..3, Ast::SetRange),
             span(4..6, Ast::SetOp),
             span(8..9, Ast::SetEnd),
+        ]
+    );
+}
+
+#[test]
+fn parsing_flags() {
+    for flags_str in ["?i:", "?i)", "?isU:", "?-isU:"] {
+        println!("Testing flags: {flags_str}");
+        let mut state = ParseState::new(flags_str);
+        let flags = state.parse_flags().unwrap();
+        assert!(!flags.is_empty);
+        assert_eq!(flags.ignore_whitespace, None);
+        assert_eq!(state.pos, flags_str.len() - 1);
+    }
+
+    let mut state = ParseState::new("?i");
+    let err = state.parse_flags().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::UnfinishedFlags);
+    assert_eq!(err.pos(), 0..2);
+
+    let mut state = ParseState::new("?i-:");
+    let err = state.parse_flags().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::UnfinishedFlagsNegation);
+    assert_eq!(err.pos(), 2..3);
+
+    let mut state = ParseState::new("?i--s:");
+    let err = state.parse_flags().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::RepeatedFlagNegation);
+    assert_eq!(err.pos(), 3..4);
+
+    let mut state = ParseState::new("?iX:");
+    let err = state.parse_flags().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::UnsupportedFlag);
+    assert_eq!(err.pos(), 2..3);
+
+    let mut state = ParseState::new("?ii:");
+    let err = state.parse_flags().unwrap_err();
+    assert_matches!(
+        err.kind(),
+        ErrorKind::RepeatedFlag {
+            contradicting: false
+        }
+    );
+    assert_eq!(err.pos(), 2..3);
+
+    let mut state = ParseState::new("?i-i:");
+    let err = state.parse_flags().unwrap_err();
+    assert_matches!(
+        err.kind(),
+        ErrorKind::RepeatedFlag {
+            contradicting: true
+        }
+    );
+    assert_eq!(err.pos(), 3..4);
+
+    let err = try_validate("(?)").unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::MissingRepetition);
+    assert_eq!(err.pos(), 0..3);
+}
+
+#[test]
+fn creating_ast_with_flags() {
+    const AST: SyntaxSpans = parse(r"(?us)^(?-x:\d{5})");
+
+    assert_eq!(
+        AST.spans(),
+        [
+            span(
+                0..4,
+                Ast::GroupStart {
+                    name: None,
+                    flags: Some((1..4).into())
+                }
+            ),
+            span(4..5, Ast::GroupEnd),
+            span(5..6, Ast::LineAssertion),
+            span(
+                6..11,
+                Ast::GroupStart {
+                    name: None,
+                    flags: Some((7..10).into())
+                }
+            ),
+            span(11..13, Ast::PerlClass),
+            span(
+                13..16,
+                Ast::CountedRepetition {
+                    min_or_exact_count: (14..15).into(),
+                    max_count: None,
+                }
+            ),
+            span(16..17, Ast::GroupEnd),
         ]
     );
 }

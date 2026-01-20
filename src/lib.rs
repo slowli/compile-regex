@@ -93,6 +93,12 @@ enum PrimitiveKind {
 }
 
 #[derive(Debug)]
+struct Flags {
+    is_empty: bool,
+    ignore_whitespace: Option<bool>,
+}
+
+#[derive(Debug)]
 struct ParseState<'a, const CAP: usize = 0> {
     /// Always a valid UTF-8 string.
     regex_bytes: &'a [u8],
@@ -142,7 +148,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
     const fn error(&self, kind: ErrorKind, start: usize) -> Error {
         let end = if self.pos <= self.regex_bytes.len() {
-            self.pos
+            self.pos // FIXME: may not be on char boundary; increase in this case
         } else {
             self.regex_bytes.len()
         };
@@ -546,12 +552,42 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         } else {
             None
         };
+
+        let mut flags_pos = None;
         if !is_named && self.regex_bytes[self.pos] == b'?' {
-            todo!() // parse flags and the non-capturing marker ':'
+            let flags_start = self.pos;
+            let flags = const_try!(self.parse_flags());
+            if matches!(flags.ignore_whitespace, Some(true)) {
+                panic!("whitespace control is not supported yet"); // FIXME
+            }
+            if !flags.is_empty {
+                flags_pos = Some(Range::new(flags_start, self.pos));
+            }
+
+            let ch = self.regex_bytes[self.pos];
+            debug_assert!(ch == b':' || ch == b')');
+
+            if ch == b')' {
+                // Flags for the current group.
+                if flags.is_empty {
+                    // Treat `(?)` as missing repetition, same as in `regex-parser`
+                    return Err(self.error(ErrorKind::MissingRepetition, start_pos));
+                }
+                // Do not advance the pos, so that `)` is parsed as the group end and decrements the group depth.
+            } else {
+                self.pos += 1;
+            }
         };
 
-        const_try!(self.push_ast(start_pos, Ast::GroupStart { name }));
-        self.group_depth += 1;
+        const_try!(self.push_ast(
+            start_pos,
+            Ast::GroupStart {
+                name,
+                flags: flags_pos,
+            }
+        ));
+
+        self.group_depth += 1; // This works fine with the standalone flags like `(?m-u)`.
         Ok(())
     }
 
@@ -588,6 +624,67 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             start,
             name: Range::new(start_pos, self.pos - 1),
             end: Range::new(self.pos - 1, self.pos),
+        })
+    }
+
+    const fn parse_flags(&mut self) -> Result<Flags, Error> {
+        const KNOWN_FLAGS_COUNT: usize = 7;
+        const KNOWN_FLAGS: [u8; KNOWN_FLAGS_COUNT] = *b"ximsUuR";
+
+        let start_pos = self.pos;
+        debug_assert!(self.regex_bytes[self.pos] == b'?');
+        self.pos += 1;
+
+        let mut negation = false;
+        let mut flag_values = [None::<bool>; KNOWN_FLAGS_COUNT];
+        let mut is_empty = true;
+        while !self.is_eof() {
+            let ch = self.regex_bytes[self.pos];
+            if ch == b':' || ch == b')' {
+                break;
+            }
+            self.pos += 1;
+
+            if ch == b'-' {
+                if negation {
+                    return Err(self.error(ErrorKind::RepeatedFlagNegation, self.pos - 1));
+                }
+                negation = true;
+                continue;
+            }
+
+            let mut i = 0;
+            while i < KNOWN_FLAGS_COUNT {
+                if ch == KNOWN_FLAGS[i] {
+                    break;
+                }
+                i += 1;
+            }
+            if i == KNOWN_FLAGS_COUNT {
+                return Err(self.error(ErrorKind::UnsupportedFlag, self.pos - 1));
+            }
+
+            if let Some(prev_value) = flag_values[i] {
+                let err = ErrorKind::RepeatedFlag {
+                    contradicting: prev_value == negation,
+                };
+                return Err(self.error(err, self.pos - 1));
+            }
+            flag_values[i] = Some(!negation);
+            is_empty = false;
+            negation = false;
+        }
+
+        if self.is_eof() {
+            return Err(self.error(ErrorKind::UnfinishedFlags, start_pos));
+        }
+        if negation {
+            return Err(self.error(ErrorKind::UnfinishedFlagsNegation, self.pos - 1));
+        }
+
+        Ok(Flags {
+            is_empty,
+            ignore_whitespace: flag_values[0],
         })
     }
 
@@ -755,6 +852,9 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
     const fn step(&mut self) -> Result<ops::ControlFlow<()>, Error> {
         let Some((current_ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
+            if self.group_depth > 0 {
+                return Err(self.error(ErrorKind::UnfinishedGroup, self.regex_bytes.len()));
+            }
             return Ok(ops::ControlFlow::Break(()));
         };
         match current_ch {

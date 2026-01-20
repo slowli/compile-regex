@@ -62,6 +62,9 @@ pub enum Ast {
     GroupStart {
         /// Group name.
         name: Option<GroupName>,
+        /// Flags for the current group, e.g. `?x-m` in `(?x-m)` or in `(?x-m:.*)`.
+        /// By design, this is mutually exclusive with `name`.
+        flags: Option<Range>,
     },
     /// Group end `)`.
     GroupEnd,
