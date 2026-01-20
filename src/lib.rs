@@ -1,62 +1,17 @@
 use core::ops;
 
+use crate::utils::{ceil_char_boundary, is_char_boundary, split_first_char};
 pub use crate::{
     ast::{Ast, GroupName, Range, SyntaxSpan, SyntaxSpans},
     errors::{Error, ErrorKind},
 };
 
+#[macro_use]
+mod utils;
 mod ast;
 mod errors;
 #[cfg(test)]
 mod tests;
-
-macro_rules! const_try {
-    ($res:expr) => {
-        match $res {
-            Ok(val) => val,
-            Err(err) => return Err(err),
-        }
-    };
-}
-
-const fn split_first_char(bytes: &[u8], mut pos: usize) -> Option<(char, usize)> {
-    if pos >= bytes.len() {
-        return None;
-    }
-
-    let mut codepoint = bytes[pos] as u32;
-    pos += 1;
-    match codepoint {
-        0..0x7f => {
-            // single-byte codepoint; do nothing
-        }
-        0b1100_0000..=0b1101_1111 => {
-            // 2-byte codepoint
-            codepoint = ((codepoint & 0b0001_1111) << 6) + (bytes[pos] as u32 & 0b0011_1111);
-            pos += 1;
-        }
-        0b1110_0000..=0b1110_1111 => {
-            // 3-byte codepoint
-            codepoint = ((codepoint & 0b0000_1111) << 12)
-                + (bytes[pos] as u32 & 0b0011_1111)
-                + (bytes[pos + 1] as u32 & 0b0011_1111);
-            pos += 2;
-        }
-        0b1111_0000..=0b1111_0111 => {
-            // 4-byte codepoint
-            codepoint = ((codepoint & 0b0000_1111) << 18)
-                + (bytes[pos] as u32 & 0b0011_1111)
-                + (bytes[pos + 1] as u32 & 0b0011_1111)
-                + (bytes[pos + 2] as u32 & 0b0011_1111);
-            pos += 3;
-        }
-        _ => panic!("invalid UTF-8 string"),
-    }
-    match char::from_u32(codepoint) {
-        Some(ch) => Some((ch, pos)),
-        None => None,
-    }
-}
 
 const fn is_meta_char(ch: u8) -> bool {
     matches!(
@@ -146,9 +101,15 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.ascii_char_at(self.pos)
     }
 
-    const fn error(&self, kind: ErrorKind, start: usize) -> Error {
+    const fn error(&self, start: usize, kind: ErrorKind) -> Error {
+        debug_assert!(start <= self.pos);
+        debug_assert!(start <= self.regex_bytes.len());
+        if start < self.regex_bytes.len() {
+            debug_assert!(is_char_boundary(self.regex_bytes[start]));
+        }
+
         let end = if self.pos <= self.regex_bytes.len() {
-            self.pos // FIXME: may not be on char boundary; increase in this case
+            ceil_char_boundary(self.regex_bytes, self.pos)
         } else {
             self.regex_bytes.len()
         };
@@ -162,7 +123,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 range: Range::new(start_pos, self.pos),
             };
             if spans.push(span).is_err() {
-                return Err(self.error(ErrorKind::AstOverflow, start_pos));
+                return Err(self.error(start_pos, ErrorKind::AstOverflow));
             }
         }
         Ok(())
@@ -229,7 +190,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         // `pos` is currently at one of `?`, `*` or `+` (all ASCII chars)
         self.pos += 1;
         if self.is_empty_last_item {
-            return Err(self.error(ErrorKind::MissingRepetition, self.pos - 1));
+            return Err(self.error(self.pos - 1, ErrorKind::MissingRepetition));
         }
         // Parse optional non-greedy marker `?`
         self.gobble(b"?");
@@ -244,21 +205,21 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.pos += 1; // gobble '{'
 
         if self.is_empty_last_item {
-            return Err(self.error(ErrorKind::MissingRepetition, start_pos));
+            return Err(self.error(start_pos, ErrorKind::MissingRepetition));
         }
         // Minimum or exact count
         let (min_count, min_count_span) = const_try!(self.parse_decimal());
 
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
-            None => return Err(self.error(ErrorKind::UnfinishedRepetition, start_pos)),
+            None => return Err(self.error(start_pos, ErrorKind::UnfinishedRepetition)),
         };
         let max_count_span = if current_char == b',' {
             self.pos += 1;
             // Maximum count
             let (max_count, max_count_span) = const_try!(self.parse_decimal());
             if max_count < min_count {
-                return Err(self.error(ErrorKind::InvalidRepetitionRange, start_pos));
+                return Err(self.error(start_pos, ErrorKind::InvalidRepetitionRange));
             }
             Some(max_count_span)
         } else {
@@ -278,7 +239,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             ));
             Ok(())
         } else {
-            Err(self.error(ErrorKind::UnfinishedRepetition, start_pos))
+            Err(self.error(start_pos, ErrorKind::UnfinishedRepetition))
         }
     }
 
@@ -299,7 +260,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
 
         if pos == self.pos {
-            Err(self.error(ErrorKind::EmptyDecimal, start_pos))
+            Err(self.error(start_pos, ErrorKind::EmptyDecimal))
         } else {
             self.pos = pos;
             Ok((decimal, Range::new(start_pos, pos)))
@@ -336,19 +297,19 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
-            None => return Err(self.error(ErrorKind::UnfinishedEscape, start_pos)),
+            None => return Err(self.error(start_pos, ErrorKind::UnfinishedEscape)),
         };
         // Gobble the escaped single ASCII char
         self.pos += 1;
 
         match current_char {
-            b'0'..=b'9' => Err(self.error(ErrorKind::UnsupportedBackref, start_pos)),
+            b'0'..=b'9' => Err(self.error(start_pos, ErrorKind::UnsupportedBackref)),
             b'x' | b'u' | b'U' => {
                 let ch = const_try!(self.parse_hex_escape(start_pos, current_char));
                 const_try!(self.push_ast(start_pos, Ast::HexEscape));
                 Ok(PrimitiveKind::Literal(ch))
             }
-            b'p' | b'P' => Err(self.error(ErrorKind::UnicodeClassesNotSupported, start_pos)),
+            b'p' | b'P' => Err(self.error(start_pos, ErrorKind::UnicodeClassesNotSupported)),
             b'd' | b's' | b'w' | b'D' | b'S' | b'W' => {
                 const_try!(self.push_ast(start_pos, Ast::PerlClass));
                 Ok(PrimitiveKind::NotLiteral)
@@ -397,7 +358,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 const_try!(self.push_ast(start_pos, Ast::EscapedChar { meta: false }));
                 Ok(PrimitiveKind::Literal(ch as char))
             }
-            _ => Err(self.error(ErrorKind::UnsupportedEscape, start_pos)),
+            _ => Err(self.error(start_pos, ErrorKind::UnsupportedEscape)),
         }
     }
 
@@ -411,7 +372,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         let mut pos = self.pos + 1; // immediately gobble the opening '{'
         let start_pos = pos;
         if pos >= self.regex_bytes.len() {
-            return Err(self.error(ErrorKind::UnfinishedWordBoundary, start_pos));
+            return Err(self.error(start_pos, ErrorKind::UnfinishedWordBoundary));
         }
         if !is_valid_char(self.regex_bytes[pos]) {
             return Ok(()); // not a word boundary specifier
@@ -437,7 +398,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
     const fn parse_hex_escape(&mut self, start_pos: usize, marker_ch: u8) -> Result<char, Error> {
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
-            None => return Err(self.error(ErrorKind::UnfinishedEscape, start_pos)),
+            None => return Err(self.error(start_pos, ErrorKind::UnfinishedEscape)),
         };
         if current_char == b'{' {
             // escape with braces, e.g., \u{123}
@@ -465,17 +426,17 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 b'0'..=b'9' => digit - b'0',
                 b'a'..=b'f' => digit - b'a' + 10,
                 b'A'..=b'F' => digit - b'A' + 10,
-                _ => return Err(self.error(ErrorKind::InvalidHex, start_pos)),
+                _ => return Err(self.error(start_pos, ErrorKind::InvalidHex)),
             };
             if self.pos >= first_digit_pos + 8 {
-                return Err(self.error(ErrorKind::NonUnicodeHex, start_pos));
+                return Err(self.error(start_pos, ErrorKind::NonUnicodeHex));
             }
             // No overflow can happen due to the check above
             hex = hex * 16 + digit as u32;
         }
 
         if self.is_eof() {
-            return Err(self.error(ErrorKind::UnfinishedEscape, start_pos));
+            return Err(self.error(start_pos, ErrorKind::UnfinishedEscape));
         }
 
         // Gobble the terminating '}'
@@ -483,11 +444,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.pos += 1;
 
         if self.pos == first_digit_pos + 1 {
-            Err(self.error(ErrorKind::EmptyHex, start_pos))
+            Err(self.error(start_pos, ErrorKind::EmptyHex))
         } else {
             match char::from_u32(hex) {
                 Some(ch) => Ok(ch),
-                None => Err(self.error(ErrorKind::NonUnicodeHex, start_pos)),
+                None => Err(self.error(start_pos, ErrorKind::NonUnicodeHex)),
             }
         }
     }
@@ -501,7 +462,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         let mut hex = 0_u32;
         while self.pos - first_digit_pos < expected_digits {
             if self.is_eof() {
-                return Err(self.error(ErrorKind::UnfinishedEscape, start_pos));
+                return Err(self.error(start_pos, ErrorKind::UnfinishedEscape));
             }
             let digit = self.regex_bytes[self.pos];
             self.pos += 1; // Advance immediately to get the correct error span
@@ -510,7 +471,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 b'0'..=b'9' => digit - b'0',
                 b'a'..=b'f' => digit - b'a' + 10,
                 b'A'..=b'F' => digit - b'A' + 10,
-                _ => return Err(self.error(ErrorKind::InvalidHex, start_pos)),
+                _ => return Err(self.error(start_pos, ErrorKind::InvalidHex)),
             };
             // No overflow can happen.
             hex = hex * 16 + digit as u32;
@@ -518,7 +479,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         match char::from_u32(hex) {
             Some(ch) => Ok(ch),
-            None => Err(self.error(ErrorKind::NonUnicodeHex, start_pos)),
+            None => Err(self.error(start_pos, ErrorKind::NonUnicodeHex)),
         }
     }
 
@@ -536,12 +497,12 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.pos += 1;
 
         if self.is_eof() {
-            return Err(self.error(ErrorKind::UnfinishedGroup, start_pos));
+            return Err(self.error(start_pos, ErrorKind::UnfinishedGroup));
         }
 
         let is_lookaround = self.gobble_any(LOOKAROUND_PREFIXES);
         if is_lookaround {
-            return Err(self.error(ErrorKind::LookaroundNotSupported, start_pos));
+            return Err(self.error(start_pos, ErrorKind::LookaroundNotSupported));
         }
 
         let name_start = self.pos;
@@ -570,8 +531,9 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             if ch == b')' {
                 // Flags for the current group.
                 if flags.is_empty {
-                    // Treat `(?)` as missing repetition, same as in `regex-parser`
-                    return Err(self.error(ErrorKind::MissingRepetition, start_pos));
+                    self.pos += 1; // include the closing `)` in the error span
+                                   // Treat `(?)` as missing repetition, same as in `regex-parser`
+                    return Err(self.error(start_pos, ErrorKind::MissingRepetition));
                 }
                 // Do not advance the pos, so that `)` is parsed as the group end and decrements the group depth.
             } else {
@@ -604,18 +566,18 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         while self.pos < self.regex_bytes.len() && self.regex_bytes[self.pos] != b'>' {
             let ch = self.regex_bytes[self.pos];
             if ch > 0x7f {
-                return Err(self.error(ErrorKind::NonAsciiCaptureName, start_pos));
+                return Err(self.error(start_pos, ErrorKind::NonAsciiCaptureName));
             }
 
             let is_first = start_pos == self.pos;
             self.pos += 1;
             if !is_capture_char(ch, is_first) {
-                return Err(self.error(ErrorKind::InvalidCaptureName, start_pos));
+                return Err(self.error(start_pos, ErrorKind::InvalidCaptureName));
             }
         }
 
         if self.is_eof() {
-            return Err(self.error(ErrorKind::UnfinishedCaptureName, start_pos));
+            return Err(self.error(start_pos, ErrorKind::UnfinishedCaptureName));
         }
         debug_assert!(self.regex_bytes[self.pos] == b'>');
         self.pos += 1;
@@ -647,7 +609,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
             if ch == b'-' {
                 if negation {
-                    return Err(self.error(ErrorKind::RepeatedFlagNegation, self.pos - 1));
+                    return Err(self.error(self.pos - 1, ErrorKind::RepeatedFlagNegation));
                 }
                 negation = true;
                 continue;
@@ -661,14 +623,14 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 i += 1;
             }
             if i == KNOWN_FLAGS_COUNT {
-                return Err(self.error(ErrorKind::UnsupportedFlag, self.pos - 1));
+                return Err(self.error(self.pos - 1, ErrorKind::UnsupportedFlag));
             }
 
             if let Some(prev_value) = flag_values[i] {
                 let err = ErrorKind::RepeatedFlag {
                     contradicting: prev_value == negation,
                 };
-                return Err(self.error(err, self.pos - 1));
+                return Err(self.error(self.pos - 1, err));
             }
             flag_values[i] = Some(!negation);
             is_empty = false;
@@ -676,10 +638,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
 
         if self.is_eof() {
-            return Err(self.error(ErrorKind::UnfinishedFlags, start_pos));
+            return Err(self.error(start_pos, ErrorKind::UnfinishedFlags));
         }
         if negation {
-            return Err(self.error(ErrorKind::UnfinishedFlagsNegation, self.pos - 1));
+            return Err(self.error(self.pos - 1, ErrorKind::UnfinishedFlagsNegation));
         }
 
         Ok(Flags {
@@ -694,7 +656,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.pos += 1;
 
         if self.group_depth == 0 {
-            return Err(self.error(ErrorKind::NonMatchingGroupEnd, start_pos));
+            return Err(self.error(start_pos, ErrorKind::NonMatchingGroupEnd));
         }
         self.group_depth -= 1;
         self.push_ast(start_pos, Ast::GroupEnd)
@@ -706,7 +668,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         let mut set_depth = 1;
         while set_depth > 0 {
             if self.is_eof() {
-                return Err(self.error(ErrorKind::UnfinishedSet, self.pos));
+                return Err(self.error(self.pos, ErrorKind::UnfinishedSet));
             }
 
             let op_start = self.pos;
@@ -747,13 +709,13 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.pos += 1;
 
         if self.is_eof() {
-            return Err(self.error(ErrorKind::UnfinishedSet, start_pos));
+            return Err(self.error(start_pos, ErrorKind::UnfinishedSet));
         }
 
         let negation = if self.regex_bytes[self.pos] == b'^' {
             self.pos += 1;
             if self.is_eof() {
-                return Err(self.error(ErrorKind::UnfinishedSet, start_pos));
+                return Err(self.error(start_pos, ErrorKind::UnfinishedSet));
             }
             Some(Range::new(self.pos - 1, self.pos))
         } else {
@@ -810,7 +772,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         let start_pos = self.pos;
         let start_item = const_try!(self.parse_set_class_item());
         if self.is_eof() {
-            return Err(self.error(ErrorKind::UnfinishedSet, self.pos));
+            return Err(self.error(self.pos, ErrorKind::UnfinishedSet));
         }
 
         let ch = self.regex_bytes[self.pos];
@@ -820,7 +782,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
 
         let PrimitiveKind::Literal(range_start) = start_item else {
-            return Err(self.error(ErrorKind::InvalidRangeStart, start_pos));
+            return Err(self.error(start_pos, ErrorKind::InvalidRangeStart));
         };
 
         debug_assert!(ch == b'-');
@@ -829,18 +791,18 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         let end_start_pos = self.pos;
         let PrimitiveKind::Literal(range_end) = const_try!(self.parse_set_class_item()) else {
-            return Err(self.error(ErrorKind::InvalidRangeEnd, end_start_pos));
+            return Err(self.error(end_start_pos, ErrorKind::InvalidRangeEnd));
         };
 
         if range_start > range_end {
-            return Err(self.error(ErrorKind::InvalidRange, start_pos));
+            return Err(self.error(start_pos, ErrorKind::InvalidRange));
         }
         Ok(())
     }
 
     const fn parse_set_class_item(&mut self) -> Result<PrimitiveKind, Error> {
         let Some((ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
-            return Err(self.error(ErrorKind::UnfinishedSet, self.pos));
+            return Err(self.error(self.pos, ErrorKind::UnfinishedSet));
         };
         if ch == '\\' {
             self.parse_escape()
@@ -853,7 +815,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
     const fn step(&mut self) -> Result<ops::ControlFlow<()>, Error> {
         let Some((current_ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
             if self.group_depth > 0 {
-                return Err(self.error(ErrorKind::UnfinishedGroup, self.regex_bytes.len()));
+                return Err(self.error(self.regex_bytes.len(), ErrorKind::UnfinishedGroup));
             }
             return Ok(ops::ControlFlow::Break(()));
         };
