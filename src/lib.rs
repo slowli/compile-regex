@@ -44,7 +44,14 @@ const fn is_escapable_char(ch: u8) -> bool {
 #[derive(Debug)]
 enum PrimitiveKind {
     Literal(char),
-    NotLiteral,
+    PerlClass,
+    Other,
+}
+
+impl PrimitiveKind {
+    const fn is_valid_set_member(&self) -> bool {
+        matches!(self, Self::Literal(_) | Self::PerlClass)
+    }
 }
 
 #[derive(Debug)]
@@ -224,12 +231,17 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         };
         let max_count_span = if current_char == b',' {
             self.pos += 1;
+            let max_count_start = self.pos;
             // Maximum count
             let (max_count, max_count_span) = const_try!(self.parse_decimal());
             if let Some(count) = max_count {
                 if count < min_count {
                     return Err(self.error(start_pos, ErrorKind::InvalidRepetitionRange));
                 }
+            } else if max_count_start != self.pos {
+                // `regex-syntax` quirk: if there's whitespace after `,`, but no digits, then the repetition is invalid.
+                // I.e., `{2,}` is valid, but `{2, }` is not.
+                return Err(self.error(max_count_start, ErrorKind::EmptyDecimal));
             }
             Some(max_count_span)
         } else {
@@ -253,7 +265,12 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
     }
 
+    /// This will trim leading and trailing whitespace regardless of the whitespace handling mode.
     const fn parse_decimal(&mut self) -> Result<(Option<u32>, Range), Error> {
+        while !self.is_eof() && self.regex_bytes[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+
         let start_pos = self.pos;
         let mut pos = self.pos;
         let mut decimal = 0_u32;
@@ -275,6 +292,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             self.pos = pos;
             Some(decimal)
         };
+
+        while !self.is_eof() && self.regex_bytes[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+
         Ok((decimal, Range::new(start_pos, pos)))
     }
 
@@ -323,7 +345,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             b'p' | b'P' => Err(self.error(start_pos, ErrorKind::UnicodeClassesNotSupported)),
             b'd' | b's' | b'w' | b'D' | b'S' | b'W' => {
                 const_try!(self.push_ast(start_pos, Ast::PerlClass));
-                Ok(PrimitiveKind::NotLiteral)
+                Ok(PrimitiveKind::PerlClass)
             }
 
             b'n' => {
@@ -353,13 +375,13 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
             b'A' | b'z' | b'B' | b'<' | b'>' => {
                 const_try!(self.push_ast(start_pos, Ast::StdAssertion));
-                Ok(PrimitiveKind::NotLiteral)
+                Ok(PrimitiveKind::Other)
             }
             b'b' => {
                 if matches!(self.ascii_char(), Some(b'{')) {
                     const_try!(self.try_parse_word_boundary());
                 }
-                Ok(PrimitiveKind::NotLiteral)
+                Ok(PrimitiveKind::Other)
             }
             ch if is_meta_char(ch) => {
                 const_try!(self.push_ast(start_pos, Ast::EscapedChar { meta: true }));
@@ -498,7 +520,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.pos == self.regex_bytes.len()
     }
 
-    const fn parse_group_start(&mut self) -> Result<(), Error> {
+    const fn parse_group_start_or_flags(&mut self) -> Result<(), Error> {
         const LOOKAROUND_PREFIXES: &[&[u8]] = &[b"?=", b"?!", b"?<=", b"?<!"];
         const NAMED_PREFIXES: &[&[u8]] = &[b"?P<", b"?<"];
 
@@ -527,11 +549,12 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         // FIXME: check that the name is unique
 
         let mut flags_pos = None;
+        let mut is_standalone_flags = false;
         if !is_named && self.regex_bytes[self.pos] == b'?' {
             let flags_start = self.pos;
             let flags = const_try!(self.parse_flags());
             if matches!(flags.ignore_whitespace, Some(true)) {
-                panic!("whitespace control is not supported yet"); // FIXME
+                return Err(self.error(flags_start, ErrorKind::UnsupportedWhitespaceFlag));
             }
             if !flags.is_empty {
                 flags_pos = Some(Range::new(flags_start, self.pos));
@@ -543,11 +566,13 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             if ch == b')' {
                 // Flags for the current group.
                 if flags.is_empty {
-                    self.pos += 1; // include the closing `)` in the error span
-                                   // Treat `(?)` as missing repetition, same as in `regex-parser`
+                    // Include the closing `)` in the error span
+                    self.pos += 1;
+                    // Treat `(?)` as missing repetition, same as in `regex-parser`
                     return Err(self.error(start_pos, ErrorKind::MissingRepetition));
                 }
                 // Do not advance the pos, so that `)` is parsed as the group end and decrements the group depth.
+                is_standalone_flags = true;
             } else {
                 self.pos += 1;
             }
@@ -561,7 +586,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             }
         ));
 
-        self.group_depth += 1; // This works fine with the standalone flags like `(?m-u)`.
+        // This works fine with the standalone flags like `(?m-u)` because we immediately close the pseudo-group.
+        self.group_depth += 1;
+        if is_standalone_flags {
+            const_try!(self.end_group());
+        }
         Ok(())
     }
 
@@ -591,6 +620,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         if self.is_eof() {
             return Err(self.error(start_pos, ErrorKind::UnfinishedCaptureName));
         }
+        if start_pos == self.pos {
+            return Err(self.error(start_pos, ErrorKind::EmptyCaptureName));
+        }
+
         debug_assert!(self.regex_bytes[self.pos] == b'>');
         self.pos += 1;
 
@@ -790,7 +823,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         let ch = self.regex_bytes[self.pos];
         if ch != b'-' || self.matches_any(self.pos..self.pos + 2, &[b"-]", b"--"]) {
-            // Not a range; we're done.
+            // Not a range.
+            if !start_item.is_valid_set_member() {
+                return Err(self.error(start_pos, ErrorKind::InvalidEscapeInSet));
+            }
+
             return Ok(());
         }
 
@@ -834,7 +871,8 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         };
         match current_ch {
             '(' => {
-                const_try!(self.parse_group_start());
+                const_try!(self.parse_group_start_or_flags());
+                // This works with standalone flags (e.g., `(?-x)`) as well; it's invalid to have a repetition after these.
                 self.is_empty_last_item = true;
             }
             ')' => {

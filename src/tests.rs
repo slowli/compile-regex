@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use regex_syntax::ast::parse::Parser;
 
 use super::*;
 
@@ -17,7 +18,7 @@ fn span(range: ops::Range<usize>, node: Ast) -> SyntaxSpan {
 
 #[test]
 fn parsing_ast() {
-    const AST: SyntaxSpans = parse(r"^wh\x40t(?<group>\t|\.\>){3,5}?\d+$");
+    const AST: SyntaxSpans = parse(r"^wh\x40t(?<group>\t|\.\>){3, 5}?\d+$");
 
     assert_eq!(
         AST.spans(),
@@ -41,15 +42,15 @@ fn parsing_ast() {
             span(22..24, Ast::StdAssertion),
             span(24..25, Ast::GroupEnd),
             span(
-                25..31,
+                25..32,
                 Ast::CountedRepetition {
                     min_or_exact_count: (26..27).into(),
-                    max_count: Some((28..29).into()),
+                    max_count: Some((29..30).into()),
                 }
             ),
-            span(31..33, Ast::PerlClass),
-            span(33..34, Ast::UncountedRepetition),
-            span(34..35, Ast::LineAssertion),
+            span(32..34, Ast::PerlClass),
+            span(34..35, Ast::UncountedRepetition),
+            span(35..36, Ast::LineAssertion),
         ]
     );
 }
@@ -74,9 +75,32 @@ fn parsing_uncounted_repetition() {
 }
 
 #[test]
+fn missing_repetition_with_flags() {
+    let err = try_validate("(?U)*").unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::MissingRepetition);
+    assert_eq!(err.pos(), 4..5);
+
+    let err = try_validate(".(?-x)+?").unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::MissingRepetition);
+    assert_eq!(err.pos(), 6..7);
+
+    let err = try_validate("(?U){3,}").unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::MissingRepetition);
+    assert_eq!(err.pos(), 4..5);
+}
+
+#[test]
 fn parsing_counted_repetition() {
     let repetitions = ["a{5}", "a{5}?", "a{2,5}", "a{2,5}?", "a{2,}", "a{2,}?"];
     for rep in repetitions {
+        let mut state = ParseState::new(rep);
+        assert!(state.step().unwrap().is_continue());
+        state.parse_counted_repetition().unwrap();
+        assert_eq!(state.pos, rep.len());
+    }
+
+    let repetitions_with_whitespace = ["a{ 5 }", "a{ 5\t}?", "a{2, 5}", "a{ 2 , 5 }?", "a{ 2,}"];
+    for rep in repetitions_with_whitespace {
         let mut state = ParseState::new(rep);
         assert!(state.step().unwrap().is_continue());
         state.parse_counted_repetition().unwrap();
@@ -253,6 +277,11 @@ fn parsing_group() {
     assert_matches!(err.kind(), ErrorKind::LookaroundNotSupported);
     assert_eq!(err.pos(), 0..3);
 
+    let mut state = ParseState::new("(?<>)");
+    let err = state.step().unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::EmptyCaptureName);
+    assert_eq!(err.pos(), 3..3);
+
     let mut state = ParseState::new("(?<$>)");
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::InvalidCaptureName);
@@ -287,6 +316,13 @@ fn parsing_set() {
         let mut state = ParseState::new(set);
         assert!(state.step().unwrap().is_continue());
         assert_eq!(state.pos, set.len());
+    }
+
+    let sets_with_invalid_escapes = [r"[\b]", r"[\>a]", r"[^\A]"];
+    for set in sets_with_invalid_escapes {
+        println!("Testing {set}");
+        let err = try_validate(set).unwrap_err();
+        assert_matches!(err.kind(), ErrorKind::InvalidEscapeInSet);
     }
 
     let mut state = ParseState::new("[]");
@@ -443,4 +479,14 @@ fn creating_ast_with_flags() {
             span(16..17, Ast::GroupEnd),
         ]
     );
+}
+
+#[test]
+fn countable_repetition_with_space() {
+    // Check that `regex-syntax` indeed fails on this input.
+    Parser::new().parse(r".{2, }").unwrap_err();
+
+    let err = try_validate(r".{2, }").unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::EmptyDecimal);
+    assert_eq!(err.pos(), 4..5);
 }
