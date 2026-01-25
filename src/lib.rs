@@ -209,6 +209,14 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
         // Minimum or exact count
         let (min_count, min_count_span) = const_try!(self.parse_decimal());
+        let min_count = match min_count {
+            Some(count) => count,
+            None => {
+                return Err(
+                    ErrorKind::EmptyDecimal.with_position(min_count_span.start..min_count_span.end)
+                )
+            }
+        };
 
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
@@ -218,8 +226,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             self.pos += 1;
             // Maximum count
             let (max_count, max_count_span) = const_try!(self.parse_decimal());
-            if max_count < min_count {
-                return Err(self.error(start_pos, ErrorKind::InvalidRepetitionRange));
+            if let Some(count) = max_count {
+                if count < min_count {
+                    return Err(self.error(start_pos, ErrorKind::InvalidRepetitionRange));
+                }
             }
             Some(max_count_span)
         } else {
@@ -243,7 +253,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
     }
 
-    const fn parse_decimal(&mut self) -> Result<(u32, Range), Error> {
+    const fn parse_decimal(&mut self) -> Result<(Option<u32>, Range), Error> {
         let start_pos = self.pos;
         let mut pos = self.pos;
         let mut decimal = 0_u32;
@@ -259,12 +269,13 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             pos += 1;
         }
 
-        if pos == self.pos {
-            Err(self.error(start_pos, ErrorKind::EmptyDecimal))
+        let decimal = if pos == self.pos {
+            None
         } else {
             self.pos = pos;
-            Ok((decimal, Range::new(start_pos, pos)))
-        }
+            Some(decimal)
+        };
+        Ok((decimal, Range::new(start_pos, pos)))
     }
 
     const fn parse_primitive(&mut self, ch: char, next_pos: usize) -> Result<(), Error> {
@@ -513,6 +524,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         } else {
             None
         };
+        // FIXME: check that the name is unique
 
         let mut flags_pos = None;
         if !is_named && self.regex_bytes[self.pos] == b'?' {
@@ -600,6 +612,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         let mut negation = false;
         let mut flag_values = [None::<bool>; KNOWN_FLAGS_COUNT];
         let mut is_empty = true;
+        let mut is_empty_negation = true;
         while !self.is_eof() {
             let ch = self.regex_bytes[self.pos];
             if ch == b':' || ch == b')' {
@@ -634,13 +647,13 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             }
             flag_values[i] = Some(!negation);
             is_empty = false;
-            negation = false;
+            is_empty_negation = !negation;
         }
 
         if self.is_eof() {
             return Err(self.error(start_pos, ErrorKind::UnfinishedFlags));
         }
-        if negation {
+        if negation && is_empty_negation {
             return Err(self.error(self.pos - 1, ErrorKind::UnfinishedFlagsNegation));
         }
 

@@ -75,7 +75,7 @@ fn parsing_uncounted_repetition() {
 
 #[test]
 fn parsing_counted_repetition() {
-    let repetitions = ["a{5}", "a{5}?", "a{2,5}", "a{2,5}?"];
+    let repetitions = ["a{5}", "a{5}?", "a{2,5}", "a{2,5}?", "a{2,}", "a{2,}?"];
     for rep in repetitions {
         let mut state = ParseState::new(rep);
         assert!(state.step().unwrap().is_continue());
