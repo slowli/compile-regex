@@ -1,3 +1,7 @@
+//! Parsing logic. Heavily inspired by AST parsing in the `regex-syntax` crate:
+//!
+//! https://github.com/rust-lang/regex/blob/master/regex-syntax/src/ast/parse.rs
+
 use core::ops;
 
 use crate::{
@@ -8,6 +12,64 @@ use crate::{
 
 #[cfg(test)]
 mod tests;
+
+/// Regular expression parsing options.
+#[derive(Debug, Default)]
+pub struct RegexOptions {
+    ignore_whitespace: bool,
+}
+
+impl RegexOptions {
+    pub const DEFAULT: Self = Self {
+        ignore_whitespace: false,
+    };
+
+    #[must_use]
+    pub const fn ignore_whitespace(mut self, yes: bool) -> Self {
+        self.ignore_whitespace = yes;
+        self
+    }
+
+    /// Tries to validate the provided regular expression.
+    pub const fn try_validate(self, regex: &str) -> Result<(), Error> {
+        let mut state = <ParseState>::new(regex, self);
+        loop {
+            match state.step() {
+                Err(err) => return Err(err),
+                Ok(ops::ControlFlow::Break(())) => break,
+                Ok(ops::ControlFlow::Continue(())) => { /* continue */ }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[track_caller]
+    pub const fn validate(self, regex: &str) {
+        if let Err(err) = self.try_validate(regex) {
+            err.compile_panic(regex);
+        }
+    }
+
+    pub const fn try_parse<const CAP: usize>(self, regex: &str) -> Result<SyntaxSpans<CAP>, Error> {
+        let mut state = ParseState::custom(regex, self, true);
+        loop {
+            match state.step() {
+                Err(err) => return Err(err),
+                Ok(ops::ControlFlow::Break(())) => return Ok(state.into_spans()),
+                Ok(ops::ControlFlow::Continue(())) => { /* continue */ }
+            }
+        }
+    }
+
+    #[track_caller]
+    pub const fn parse<const CAP: usize>(self, regex: &str) -> SyntaxSpans<CAP> {
+        match self.try_parse(regex) {
+            Ok(spans) => spans,
+            Err(err) => err.compile_panic(regex),
+        }
+    }
+}
 
 #[derive(Debug)]
 enum PrimitiveKind {
@@ -28,34 +90,64 @@ struct Flags {
     ignore_whitespace: Option<bool>,
 }
 
+/// Parse state backup.
+#[derive(Debug)]
+struct Backup {
+    pos: usize,
+    span_count: usize,
+}
+
 #[derive(Debug)]
 pub(crate) struct ParseState<'a, const CAP: usize = 0> {
     /// Always a valid UTF-8 string.
     regex_bytes: &'a [u8],
+    /// Points to the next char to be parsed in `regex_bytes`.
     pos: usize,
     group_depth: usize,
     is_empty_last_item: bool,
+    ignore_whitespace: bool,
     spans: Option<SyntaxSpans<CAP>>,
 }
 
 impl<'a> ParseState<'a> {
-    pub(crate) const fn new(regex: &'a str) -> Self {
-        Self::custom(regex, false)
+    pub(crate) const fn new(regex: &'a str, options: RegexOptions) -> Self {
+        Self::custom(regex, options, false)
     }
 }
 
 impl<'a, const CAP: usize> ParseState<'a, CAP> {
-    pub(crate) const fn custom(regex: &'a str, with_ast: bool) -> Self {
+    pub(crate) const fn custom(regex: &'a str, options: RegexOptions, with_ast: bool) -> Self {
         Self {
             regex_bytes: regex.as_bytes(),
             pos: 0,
             group_depth: 0,
             is_empty_last_item: true,
+            ignore_whitespace: options.ignore_whitespace,
             spans: if with_ast {
                 Some(SyntaxSpans::new())
             } else {
                 None
             },
+        }
+    }
+
+    const fn backup(&self) -> Backup {
+        Backup {
+            pos: self.pos,
+            span_count: match &self.spans {
+                Some(spans) => spans.len(),
+                None => 0,
+            },
+        }
+    }
+
+    const fn restore(&mut self, backup: Backup) {
+        debug_assert!(self.pos >= backup.pos);
+
+        self.pos = backup.pos;
+        if let Some(spans) = &mut self.spans {
+            debug_assert!(spans.len() >= backup.span_count);
+            spans.trim(backup.span_count);
         }
     }
 
@@ -89,6 +181,14 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             self.regex_bytes.len()
         };
         kind.with_position(start..end)
+    }
+
+    const fn ast_len(&self) -> usize {
+        if let Some(spans) = &self.spans {
+            spans.len()
+        } else {
+            0
+        }
     }
 
     const fn push_ast(&mut self, start_pos: usize, node: Ast) -> Result<(), Error> {
@@ -160,6 +260,67 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         false
     }
 
+    const fn gobble_whitespace_and_comments(&mut self) -> Result<(), Error> {
+        if !self.ignore_whitespace {
+            return Ok(());
+        }
+
+        let mut comment_start = None;
+        while !self.is_eof() {
+            let Some((ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
+                break; // reached EOF
+            };
+
+            if let Some(start) = comment_start {
+                if ch == '\n' {
+                    const_try!(self.push_ast(start, Ast::Comment));
+                    comment_start = None;
+                }
+                self.pos = next_pos;
+            } else if ch.is_ascii_whitespace() {
+                // TODO: support non-ASCII whitespace? `char::is_whitespace` is const only since Rust 1.87
+                self.pos = next_pos;
+            } else if ch == '#' {
+                comment_start = Some(self.pos);
+                self.pos = next_pos;
+            } else {
+                break;
+            }
+        }
+
+        if let Some(start) = comment_start {
+            const_try!(self.push_ast(start, Ast::Comment));
+        }
+        Ok(())
+    }
+
+    /// Peeks the first non-whitespace / comment char after the specified position.
+    const fn peek_whitespace(&self, mut pos: usize) -> Option<char> {
+        let mut is_in_comment = false;
+        while !self.is_eof() {
+            let Some((ch, next_pos)) = split_first_char(self.regex_bytes, pos) else {
+                break; // reached EOF
+            };
+
+            if is_in_comment {
+                if ch == '\n' {
+                    is_in_comment = false;
+                }
+                pos = next_pos;
+            } else if self.ignore_whitespace && ch.is_ascii_whitespace() {
+                // TODO: support non-ASCII whitespace? `char::is_whitespace` is const only since Rust 1.87
+                pos = next_pos;
+            } else if self.ignore_whitespace && ch == '#' {
+                is_in_comment = true;
+                pos = next_pos;
+            } else {
+                return Some(ch);
+            }
+        }
+        None
+    }
+
+    /// Parses uncounted repetition operation, e.g. `*` or `+?`.
     const fn parse_uncounted_repetition(&mut self) -> Result<(), Error> {
         let start_pos = self.pos;
         // `pos` is currently at one of `?`, `*` or `+` (all ASCII chars)
@@ -174,6 +335,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         Ok(())
     }
 
+    /// Parses counted repetition, e.g., `{2}`, `{2,}` or `{2,5}`.
     const fn parse_counted_repetition(&mut self) -> Result<(), Error> {
         let start_pos = self.pos;
         debug_assert!(self.regex_bytes[self.pos] == b'{');
@@ -182,6 +344,8 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         if self.is_empty_last_item {
             return Err(self.error(start_pos, ErrorKind::MissingRepetition));
         }
+        const_try!(self.gobble_whitespace_and_comments());
+
         // Minimum or exact count
         let (min_count, min_count_span) = const_try!(self.parse_decimal());
         let min_count = match min_count {
@@ -192,6 +356,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 )
             }
         };
+        const_try!(self.gobble_whitespace_and_comments());
 
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
@@ -199,6 +364,8 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         };
         let max_count_span = if current_char == b',' {
             self.pos += 1;
+            const_try!(self.gobble_whitespace_and_comments());
+
             let max_count_start = self.pos;
             // Maximum count
             let (max_count, max_count_span) = const_try!(self.parse_decimal());
@@ -216,8 +383,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             None
         };
 
+        const_try!(self.gobble_whitespace_and_comments());
         if matches!(self.ascii_char(), Some(b'}')) {
             self.pos += 1;
+            const_try!(self.gobble_whitespace_and_comments());
+
             // Parse optional non-greedy marker `?`
             self.gobble(b"?");
             const_try!(self.push_ast(
@@ -370,32 +540,52 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         const KNOWN_BOUNDARIES: &[&[u8]] = &[b"start", b"end", b"start-half", b"end-half"];
 
-        let mut pos = self.pos + 1; // immediately gobble the opening '{'
-        let start_pos = pos;
-        if pos >= self.regex_bytes.len() {
+        let backup = self.backup();
+        debug_assert!(self.regex_bytes[self.pos] == b'{');
+        self.pos += 1;
+
+        const_try!(self.gobble_whitespace_and_comments());
+        let start_pos = self.pos;
+        if self.is_eof() {
             return Err(self.error(start_pos, ErrorKind::UnfinishedWordBoundary));
         }
-        if !is_valid_char(self.regex_bytes[pos]) {
+
+        if !is_valid_char(self.regex_bytes[self.pos]) {
+            self.restore(backup);
             return Ok(()); // not a word boundary specifier
         }
 
-        while pos < self.regex_bytes.len() && is_valid_char(self.regex_bytes[pos]) {
-            pos += 1;
+        while !self.is_eof() && is_valid_char(self.regex_bytes[self.pos]) {
+            self.pos += 1;
+            // `regex-syntax` allows whitespace / comments *inside* the specifier, which looks weird, so we don't allow it.
         }
-        if pos == self.regex_bytes.len() || self.regex_bytes[pos] != b'}' {
-            return Err(ErrorKind::UnfinishedWordBoundary.with_position(start_pos..pos));
+        let end_pos = self.pos;
+        const_try!(self.gobble_whitespace_and_comments());
+
+        if self.is_eof() || self.regex_bytes[self.pos] != b'}' {
+            return Err(self.error(start_pos, ErrorKind::UnfinishedWordBoundary));
         }
 
         // Check whether the boundary specification is known.
-        if !self.matches_any(start_pos..pos, KNOWN_BOUNDARIES) {
-            return Err(ErrorKind::UnknownWordBoundary.with_position(start_pos..pos));
+        if !self.matches_any(start_pos..end_pos, KNOWN_BOUNDARIES) {
+            return Err(ErrorKind::UnknownWordBoundary.with_position(start_pos..end_pos));
         }
 
-        self.pos = pos;
-        self.push_ast(start_pos, Ast::StdAssertion)
+        self.pos += 1; // gobble '}'
+        const_try!(self.push_ast(start_pos, Ast::StdAssertion));
+        Ok(())
     }
 
     /// Parses a hex-escaped char. The parser position is after the marker ('x', 'u' or 'U').
+    ///
+    /// Unlike `regex-syntax`, we don't allow any whitespace / comments *inside* the escape, so it's closer to Rust syntax,
+    /// and doesn't lead to terribly looking regexes:
+    ///
+    /// ```text
+    /// \u # can you guess
+    ///   0 # this is
+    /// 1 2 3 # a hex escape?
+    /// ```
     const fn parse_hex_escape(&mut self, start_pos: usize, marker_ch: u8) -> Result<char, Error> {
         let current_char = match self.ascii_char() {
             Some(ch) => ch,
@@ -497,6 +687,16 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         debug_assert!(self.regex_bytes[self.pos] == b'(');
         self.pos += 1;
 
+        let start_ast_idx = self.ast_len();
+        const_try!(self.push_ast(
+            start_pos,
+            Ast::GroupStart {
+                name: None,
+                flags: None,
+            }
+        ));
+        const_try!(self.gobble_whitespace_and_comments());
+
         if self.is_eof() {
             return Err(self.error(start_pos, ErrorKind::UnfinishedGroup));
         }
@@ -508,12 +708,15 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         let name_start = self.pos;
         let is_named = self.gobble_any(NAMED_PREFIXES);
-        let name = if is_named {
+        if is_named {
             let start = Range::new(name_start, self.pos);
-            Some(const_try!(self.parse_capture_name(start)))
-        } else {
-            None
-        };
+            let name_ast = const_try!(self.parse_capture_name(start));
+            if let Some(spans) = &mut self.spans {
+                if let Ast::GroupStart { name, .. } = &mut spans.index_mut(start_ast_idx).node {
+                    *name = Some(name_ast);
+                }
+            }
+        }
         // FIXME: check that the name is unique
 
         let mut flags_pos = None;
@@ -546,13 +749,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             }
         };
 
-        const_try!(self.push_ast(
-            start_pos,
-            Ast::GroupStart {
-                name,
-                flags: flags_pos,
+        if let Some(spans) = &mut self.spans {
+            if let Ast::GroupStart { flags, .. } = &mut spans.index_mut(start_ast_idx).node {
+                *flags = flags_pos;
             }
-        ));
+        }
 
         // This works fine with the standalone flags like `(?m-u)` because we immediately close the pseudo-group.
         self.group_depth += 1;
@@ -562,6 +763,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         Ok(())
     }
 
+    /// Parses a capture name. The parser position is after the opening `<`.
     const fn parse_capture_name(&mut self, start: Range) -> Result<GroupName, Error> {
         const fn is_capture_char(ch: u8, is_first: bool) -> bool {
             if is_first {
@@ -602,6 +804,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         })
     }
 
+    /// Parses flags. The parser position is at the opening `?`.
     const fn parse_flags(&mut self) -> Result<Flags, Error> {
         const KNOWN_FLAGS_COUNT: usize = 7;
         const KNOWN_FLAGS: [u8; KNOWN_FLAGS_COUNT] = *b"ximsUuR";
@@ -684,6 +887,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             if self.is_eof() {
                 return Err(self.error(self.pos, ErrorKind::UnfinishedSet));
             }
+            const_try!(self.gobble_whitespace_and_comments());
 
             let op_start = self.pos;
             if self.gobble_any(&[b"&&", b"--", b"~~"]) {
@@ -722,28 +926,38 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         debug_assert!(self.regex_bytes[self.pos] == b'[');
         self.pos += 1;
 
+        let ast_idx = self.ast_len();
+        const_try!(self.push_ast(start_pos, Ast::SetStart { negation: None }));
+
+        const_try!(self.gobble_whitespace_and_comments());
         if self.is_eof() {
             return Err(self.error(start_pos, ErrorKind::UnfinishedSet));
         }
 
-        let negation = if self.regex_bytes[self.pos] == b'^' {
+        if self.regex_bytes[self.pos] == b'^' {
             self.pos += 1;
+            let negation_range = Range::new(self.pos - 1, self.pos);
+            const_try!(self.gobble_whitespace_and_comments());
             if self.is_eof() {
                 return Err(self.error(start_pos, ErrorKind::UnfinishedSet));
             }
-            Some(Range::new(self.pos - 1, self.pos))
-        } else {
-            None
-        };
-        const_try!(self.push_ast(start_pos, Ast::SetStart { negation }));
+
+            if let Some(spans) = &mut self.spans {
+                if let Ast::SetStart { negation } = &mut spans.index_mut(ast_idx).node {
+                    *negation = Some(negation_range);
+                }
+            }
+        }
 
         if self.regex_bytes[self.pos] == b']' {
             // Literal ']'
             self.pos += 1;
+            const_try!(self.gobble_whitespace_and_comments());
         } else {
             // Any amount of literal '-'
             while !self.is_eof() && self.regex_bytes[self.pos] == b'-' {
                 self.pos += 1;
+                const_try!(self.gobble_whitespace_and_comments());
             }
         }
         Ok(())
@@ -785,17 +999,20 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
     const fn parse_set_class_range(&mut self) -> Result<(), Error> {
         let start_pos = self.pos;
         let start_item = const_try!(self.parse_set_class_item());
+        const_try!(self.gobble_whitespace_and_comments());
         if self.is_eof() {
             return Err(self.error(self.pos, ErrorKind::UnfinishedSet));
         }
 
         let ch = self.regex_bytes[self.pos];
-        if ch != b'-' || self.matches_any(self.pos..self.pos + 2, &[b"-]", b"--"]) {
+        if ch != b'-' || {
+            let next_ch = self.peek_whitespace(self.pos + 1);
+            matches!(next_ch, Some(']' | '-'))
+        } {
             // Not a range.
             if !start_item.is_valid_set_member() {
                 return Err(self.error(start_pos, ErrorKind::InvalidEscapeInSet));
             }
-
             return Ok(());
         }
 
@@ -806,6 +1023,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         debug_assert!(ch == b'-');
         self.pos += 1;
         const_try!(self.push_ast(self.pos - 1, Ast::SetRange));
+        const_try!(self.gobble_whitespace_and_comments());
 
         let end_start_pos = self.pos;
         let PrimitiveKind::Literal(range_end) = const_try!(self.parse_set_class_item()) else {
@@ -831,6 +1049,8 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
     }
 
     pub(crate) const fn step(&mut self) -> Result<ops::ControlFlow<()>, Error> {
+        const_try!(self.gobble_whitespace_and_comments());
+
         let Some((current_ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
             if self.group_depth > 0 {
                 return Err(self.error(self.regex_bytes.len(), ErrorKind::UnfinishedGroup));

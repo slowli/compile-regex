@@ -1,3 +1,6 @@
+use core::ops;
+use std::collections::HashMap;
+
 use super::*;
 
 impl From<ops::Range<usize>> for Range {
@@ -23,7 +26,7 @@ fn parsing_ast() {
             span(0..1, Ast::LineAssertion),
             span(3..7, Ast::HexEscape),
             span(
-                8..17,
+                8..9,
                 Ast::GroupStart {
                     name: Some(GroupName {
                         start: (9..11).into(),
@@ -53,6 +56,39 @@ fn parsing_ast() {
 }
 
 #[test]
+fn parsing_ast_with_whitespace() {
+    const REGEX: &str = r"
+      ^w h \x40 # ascii escape
+      t (?<group>
+        \t | \ \.\> # named group
+      ) { 3, 5 }? # non-greedy repetition
+      \d+ $";
+    const AST: SyntaxSpans = RegexOptions::DEFAULT.ignore_whitespace(true).parse(REGEX);
+
+    let expected_spans = [
+        (r"\x40", Ast::HexEscape),
+        ("# ascii escape", Ast::Comment),
+        (r"\t", Ast::EscapedLiteral),
+        (r"\.", Ast::EscapedChar { meta: true }),
+        (r"\ ", Ast::EscapedChar { meta: false }),
+        (r"\>", Ast::StdAssertion),
+        ("# named group", Ast::Comment),
+        ("# non-greedy repetition", Ast::Comment),
+        (r"\d", Ast::PerlClass),
+        ("+", Ast::UncountedRepetition),
+    ];
+    let actual_spans: HashMap<_, _> = AST
+        .spans()
+        .iter()
+        .map(|span| (&REGEX[ops::Range::from(span.range)], span.node))
+        .collect();
+
+    for (span_str, ast) in expected_spans {
+        assert_eq!(actual_spans[&span_str], ast, "{span_str:?}");
+    }
+}
+
+#[test]
 fn parsing_set_ast() {
     let ast: SyntaxSpans = parse(r"[[^ab]~~\t]");
     assert_eq!(
@@ -60,7 +96,7 @@ fn parsing_set_ast() {
         [
             span(0..1, Ast::SetStart { negation: None }),
             span(
-                1..3,
+                1..2,
                 Ast::SetStart {
                     negation: Some((2..3).into())
                 }
@@ -97,6 +133,33 @@ fn parsing_set_ast() {
 }
 
 #[test]
+fn parsing_set_ast_with_whitespace() {
+    const AST: SyntaxSpans = RegexOptions::DEFAULT.ignore_whitespace(true).parse(
+        r"[ ^ # negated!
+          0 - 9 # another comment
+          -- 4-
+        ]",
+    );
+
+    assert_eq!(
+        AST.spans(),
+        [
+            span(
+                0..1,
+                Ast::SetStart {
+                    negation: Some((2..3).into()),
+                }
+            ),
+            span(4..14, Ast::Comment),
+            span(27..28, Ast::SetRange),
+            span(31..48, Ast::Comment),
+            span(59..61, Ast::SetOp),
+            span(73..74, Ast::SetEnd),
+        ]
+    );
+}
+
+#[test]
 fn creating_ast_with_flags() {
     const AST: SyntaxSpans = parse(r"(?us)^(?-x:\d{5})");
 
@@ -104,7 +167,7 @@ fn creating_ast_with_flags() {
         AST.spans(),
         [
             span(
-                0..4,
+                0..1,
                 Ast::GroupStart {
                     name: None,
                     flags: Some((1..4).into())
@@ -113,7 +176,7 @@ fn creating_ast_with_flags() {
             span(4..5, Ast::GroupEnd),
             span(5..6, Ast::LineAssertion),
             span(
-                6..11,
+                6..7,
                 Ast::GroupStart {
                     name: None,
                     flags: Some((7..10).into())

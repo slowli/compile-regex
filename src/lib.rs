@@ -1,9 +1,7 @@
-use core::ops;
-
-use crate::parse::ParseState;
 pub use crate::{
     ast::{Ast, GroupName, Range, SyntaxSpan, SyntaxSpans},
     errors::{Error, ErrorKind},
+    parse::RegexOptions,
 };
 
 #[macro_use]
@@ -44,16 +42,7 @@ const fn is_escapable_char(ch: u8) -> bool {
 
 /// Tries to validate the provided regular expression.
 pub const fn try_validate(regex: &str) -> Result<(), Error> {
-    let mut state = <ParseState>::new(regex);
-    loop {
-        match state.step() {
-            Err(err) => return Err(err),
-            Ok(ops::ControlFlow::Break(())) => break,
-            Ok(ops::ControlFlow::Continue(())) => { /* continue */ }
-        }
-    }
-
-    Ok(())
+    RegexOptions::DEFAULT.try_validate(regex)
 }
 
 #[track_caller]
@@ -64,14 +53,7 @@ pub const fn validate(regex: &str) {
 }
 
 pub const fn try_parse<const CAP: usize>(regex: &str) -> Result<SyntaxSpans<CAP>, Error> {
-    let mut state = ParseState::custom(regex, true);
-    loop {
-        match state.step() {
-            Err(err) => return Err(err),
-            Ok(ops::ControlFlow::Break(())) => return Ok(state.into_spans()),
-            Ok(ops::ControlFlow::Continue(())) => { /* continue */ }
-        }
-    }
+    RegexOptions::DEFAULT.try_parse(regex)
 }
 
 #[track_caller]

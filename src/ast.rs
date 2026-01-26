@@ -78,6 +78,8 @@ pub enum Ast {
     SetRange,
     /// ASCII char class, e.g., `[:alnum:]`.
     AsciiClass,
+    /// Comment, e.g., `# Test`.
+    Comment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -129,6 +131,19 @@ impl<const N: usize> SyntaxSpans<N> {
     pub const fn spans(&self) -> &[SyntaxSpan] {
         let (start, _) = self.inner.split_at(self.len);
         start
+    }
+
+    pub(crate) const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) const fn trim(&mut self, new_len: usize) {
+        self.len = new_len;
+    }
+
+    pub(crate) const fn index_mut(&mut self, idx: usize) -> &mut SyntaxSpan {
+        assert!(idx < self.len, "index out of range");
+        &mut self.inner[idx]
     }
 
     pub(crate) const fn push(&mut self, span: SyntaxSpan) -> Result<(), PushError> {
