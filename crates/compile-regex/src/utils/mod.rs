@@ -1,6 +1,6 @@
 //! General-purpose utils.
 
-pub use self::stack::Stack;
+pub(crate) use self::stack::Stack;
 
 mod stack;
 
@@ -12,6 +12,34 @@ macro_rules! const_try {
             Err(err) => return Err(err),
         }
     };
+}
+
+pub(crate) const fn is_meta_char(ch: u8) -> bool {
+    matches!(
+        ch,
+        b'\\'
+            | b'.'
+            | b'+'
+            | b'*'
+            | b'?'
+            | b'('
+            | b')'
+            | b'|'
+            | b'['
+            | b']'
+            | b'{'
+            | b'}'
+            | b'^'
+            | b'$'
+            | b'#'
+            | b'&'
+            | b'-'
+            | b'~'
+    )
+}
+
+pub(crate) const fn is_escapable_char(ch: u8) -> bool {
+    !matches!(ch, b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'<' | b'>')
 }
 
 const UTF8_CONTINUATION_MASK: u8 = 0b1100_0000;

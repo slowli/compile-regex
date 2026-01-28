@@ -17,3 +17,6 @@ arbitrary.workspace = true
 assert_matches.workspace = true
 rand.workspace = true
 regex-syntax = { workspace = true, features = ["arbitrary"] }
+
+[lints]
+workspace = true

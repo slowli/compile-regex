@@ -13,7 +13,7 @@ use crate::try_validate;
 fn parsing_uncounted_repetition() {
     let repetitions = ["a*", "a+", "a?", "a*?", "a??", "a+?"];
     for rep in repetitions {
-        let mut state = ParseState::new(rep, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(rep, &RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         state.parse_uncounted_repetition().unwrap();
         assert_eq!(state.pos, rep.len());
@@ -21,7 +21,7 @@ fn parsing_uncounted_repetition() {
 
     let invalid_repetitions = ["*", "?", "+"];
     for rep in invalid_repetitions {
-        let mut state = ParseState::new(rep, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(rep, &RegexOptions::DEFAULT);
         let err = state.step().unwrap_err();
         assert_matches!(err.kind(), ErrorKind::MissingRepetition);
         assert_eq!(err.pos(), 0..1);
@@ -32,7 +32,7 @@ fn parsing_uncounted_repetition() {
 fn gobbling_whitespace() {
     let mut state = ParseState::<2>::custom(
         "  # Comment\n\t # Another comment",
-        RegexOptions::DEFAULT,
+        &RegexOptions::DEFAULT,
         true,
     );
     state.ignore_whitespace = true;
@@ -44,7 +44,7 @@ fn gobbling_whitespace() {
     assert!(spans
         .as_slice()
         .iter()
-        .all(|span| matches!(span.node, Ast::Comment)));
+        .all(|span| matches!(span.node, Node::Comment)));
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn missing_repetition_with_flags() {
 fn parsing_counted_repetition() {
     let repetitions = ["a{5}", "a{5}?", "a{2,5}", "a{2,5}?", "a{2,}", "a{2,}?"];
     for rep in repetitions {
-        let mut state = ParseState::new(rep, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(rep, &RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         state.parse_counted_repetition().unwrap();
         assert_eq!(state.pos, rep.len());
@@ -74,36 +74,36 @@ fn parsing_counted_repetition() {
 
     let repetitions_with_whitespace = ["a{ 5 }", "a{ 5\t}?", "a{2, 5}", "a{ 2 , 5 }?", "a{ 2,}"];
     for rep in repetitions_with_whitespace {
-        let mut state = ParseState::new(rep, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(rep, &RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         state.parse_counted_repetition().unwrap();
         assert_eq!(state.pos, rep.len());
     }
 
-    let mut state = ParseState::new("{5}", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("{5}", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::MissingRepetition);
     assert_eq!(err.pos(), 0..1);
 
-    let mut state = ParseState::new("a{what}", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("a{what}", &RegexOptions::DEFAULT);
     assert!(state.step().unwrap().is_continue());
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::EmptyDecimal);
     assert_eq!(err.pos(), 2..2);
 
-    let mut state = ParseState::new("a{}", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("a{}", &RegexOptions::DEFAULT);
     assert!(state.step().unwrap().is_continue());
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::EmptyDecimal);
     assert_eq!(err.pos(), 2..2);
 
-    let mut state = ParseState::new("a{9876543210}", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("a{9876543210}", &RegexOptions::DEFAULT);
     assert!(state.step().unwrap().is_continue());
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::InvalidDecimal);
     assert_eq!(err.pos(), 2..12);
 
-    let mut state = ParseState::new("a{5,2}", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("a{5,2}", &RegexOptions::DEFAULT);
     assert!(state.step().unwrap().is_continue());
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::InvalidRepetitionRange);
@@ -125,7 +125,7 @@ fn parsing_counted_repetition_with_whitespace() {
             .parse(rep)
             .unwrap();
 
-        let mut state = ParseState::new(rep, RegexOptions::DEFAULT.ignore_whitespace(true));
+        let mut state = ParseState::new(rep, &RegexOptions::DEFAULT.ignore_whitespace(true));
         assert!(state.step().unwrap().is_continue());
         state.parse_counted_repetition().unwrap();
         assert_eq!(state.pos, rep.len());
@@ -139,27 +139,27 @@ fn parsing_escaped_chars() {
     ];
     for pat in escaped_chars {
         println!("Testing {pat}");
-        let mut state = ParseState::new(pat, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(pat, &RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         assert_eq!(state.pos, pat.len());
     }
 
-    let mut state = ParseState::new("\\", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("\\", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnfinishedEscape);
     assert_eq!(err.pos(), 0..1);
 
-    let mut state = ParseState::new("\\д", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("\\д", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnfinishedEscape);
     assert_eq!(err.pos(), 0..1);
 
-    let mut state = ParseState::new("\\0", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("\\0", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnsupportedBackref);
     assert_eq!(err.pos(), 0..2);
 
-    let mut state = ParseState::new("\\Y", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("\\Y", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnsupportedEscape);
     assert_eq!(err.pos(), 0..2);
@@ -170,7 +170,7 @@ fn parsing_word_boundaries() {
     let boundaries = [r"\b{start}", r"\b{end}", r"\b{start-half}", r"\b{end-half}"];
     for boundary in boundaries {
         println!("Testing {boundary}");
-        let mut state = ParseState::new(boundary, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(boundary, &RegexOptions::DEFAULT);
         assert_matches!(state.parse_escape().unwrap(), PrimitiveKind::Other);
         assert_eq!(state.pos, boundary.len());
     }
@@ -192,7 +192,7 @@ fn parsing_word_boundaries_with_whitespace() {
             .parse(boundary)
             .unwrap();
 
-        let mut state = ParseState::new(boundary, RegexOptions::DEFAULT.ignore_whitespace(true));
+        let mut state = ParseState::new(boundary, &RegexOptions::DEFAULT.ignore_whitespace(true));
         assert_matches!(state.parse_escape().unwrap(), PrimitiveKind::Other);
         assert_eq!(state.pos, boundary.len());
     }
@@ -203,7 +203,7 @@ fn parsing_hex_digits() {
     let escapes = ["\\x0c", "\\x0A", "\\u077d", "\\uABCD", "\\U0001234A"];
     for esc in escapes {
         println!("Testing {esc}");
-        let mut state = ParseState::new(esc, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(esc, &RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         assert_eq!(state.pos, esc.len());
     }
@@ -211,7 +211,7 @@ fn parsing_hex_digits() {
     let unfinished_escapes = ["\\x", "\\x0", "\\u977", "\\U1234"];
     for esc in unfinished_escapes {
         println!("Testing {esc}");
-        let mut state = ParseState::new(esc, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(esc, &RegexOptions::DEFAULT);
         let err = state.step().unwrap_err();
         assert_matches!(err.kind(), ErrorKind::UnfinishedEscape);
         assert_eq!(err.pos(), 0..esc.len());
@@ -220,7 +220,7 @@ fn parsing_hex_digits() {
     let non_hex_escapes = ["\\x0g", "\\u977l", "\\U1234w"];
     for esc in non_hex_escapes {
         println!("Testing {esc}");
-        let mut state = ParseState::new(esc, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(esc, &RegexOptions::DEFAULT);
         let err = state.step().unwrap_err();
         assert_matches!(err.kind(), ErrorKind::InvalidHex);
         assert_eq!(err.pos(), 0..esc.len());
@@ -229,7 +229,7 @@ fn parsing_hex_digits() {
     let invalid_char_escapes = ["\\uD800", "\\U00110000"];
     for esc in invalid_char_escapes {
         println!("Testing {esc}");
-        let mut state = ParseState::new(esc, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(esc, &RegexOptions::DEFAULT);
         let err = state.step().unwrap_err();
         assert_matches!(err.kind(), ErrorKind::NonUnicodeHex);
         assert_eq!(err.pos(), 0..esc.len());
@@ -241,7 +241,7 @@ fn parsing_hex_brace() {
     let escapes = ["\\x{c}", "\\x{0A}", "\\x{077d}", "\\u{ABC}", "\\U{1234A}"];
     for esc in escapes {
         println!("Testing {esc}");
-        let mut state = ParseState::new(esc, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(esc, &RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         assert_eq!(state.pos, esc.len());
     }
@@ -249,13 +249,13 @@ fn parsing_hex_brace() {
     let unfinished_escapes = ["\\x{", "\\u{0", "\\U{123"];
     for esc in unfinished_escapes {
         println!("Testing {esc}");
-        let mut state = ParseState::new(esc, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(esc, &RegexOptions::DEFAULT);
         let err = state.step().unwrap_err();
         assert_matches!(err.kind(), ErrorKind::UnfinishedEscape);
         assert_eq!(err.pos(), 0..esc.len());
     }
 
-    let mut state = ParseState::new("\\u{}", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("\\u{}", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::EmptyHex);
     assert_eq!(err.pos(), 0..4);
@@ -263,7 +263,7 @@ fn parsing_hex_brace() {
     let non_hex_escapes = ["\\x{0g}", "\\u{97l}", "\\U{1234 }"];
     for esc in non_hex_escapes {
         println!("Testing {esc}");
-        let mut state = ParseState::new(esc, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(esc, &RegexOptions::DEFAULT);
         let err = state.step().unwrap_err();
         assert_matches!(err.kind(), ErrorKind::InvalidHex);
         assert_eq!(err.pos(), 0..esc.len() - 1); // the invalid hex digit is always the last one
@@ -272,13 +272,13 @@ fn parsing_hex_brace() {
     let invalid_char_escapes = ["\\x{D800}", "\\U{110001}"];
     for esc in invalid_char_escapes {
         println!("Testing {esc}");
-        let mut state = ParseState::new(esc, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(esc, &RegexOptions::DEFAULT);
         let err = state.step().unwrap_err();
         assert_matches!(err.kind(), ErrorKind::NonUnicodeHex);
         assert_eq!(err.pos(), 0..esc.len());
     }
 
-    let mut state = ParseState::new("\\u{ddddddddd}", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("\\u{ddddddddd}", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::NonUnicodeHex);
     assert_eq!(err.pos(), 0..11);
@@ -289,38 +289,38 @@ fn parsing_group() {
     let groups = ["()", "(?<group>)", "(?P<u.w0t[1]>)"];
     for group in groups {
         println!("Testing {group}");
-        let mut state = ParseState::new(group, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(group, &RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         assert_eq!(state.pos, group.len() - 1);
         assert_eq!(state.groups.len(), 1);
     }
 
-    let mut state = ParseState::new("(", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("(", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnfinishedGroup);
     assert_eq!(err.pos(), 0..1);
 
-    let mut state = ParseState::new("(?=.*)", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("(?=.*)", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::LookaroundNotSupported);
     assert_eq!(err.pos(), 0..3);
 
-    let mut state = ParseState::new("(?<>)", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("(?<>)", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::EmptyCaptureName);
     assert_eq!(err.pos(), 3..3);
 
-    let mut state = ParseState::new("(?<$>)", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("(?<$>)", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::InvalidCaptureName);
     assert_eq!(err.pos(), 3..4);
 
-    let mut state = ParseState::new("(?<д>)", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("(?<д>)", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::NonAsciiCaptureName);
     assert_eq!(err.pos(), 3..3); // FIXME: span the char
 
-    let mut state = ParseState::new("(?<name", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("(?<name", &RegexOptions::DEFAULT);
     let err = state.step().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnfinishedCaptureName);
     assert_eq!(err.pos(), 3..7);
@@ -370,7 +370,7 @@ fn regex_does_not_allow_whitespace_in_group_start() {
 #[test]
 fn controlling_whitespace_in_groups_via_flags() {
     let regex = "(?x) .*";
-    let mut state = ParseState::new(regex, RegexOptions::DEFAULT);
+    let mut state = ParseState::new(regex, &RegexOptions::DEFAULT);
     assert!(!state.ignore_whitespace);
 
     assert!(state.step().unwrap().is_continue());
@@ -382,7 +382,7 @@ fn controlling_whitespace_in_groups_via_flags() {
 #[test]
 fn controlling_whitespace_in_groups_via_group_flags() {
     let regex = "(?x: .* ){2,}";
-    let mut state = ParseState::new(regex, RegexOptions::DEFAULT);
+    let mut state = ParseState::new(regex, &RegexOptions::DEFAULT);
     assert!(!state.ignore_whitespace);
 
     assert!(state.step().unwrap().is_continue());
@@ -402,7 +402,7 @@ fn parsing_set() {
     let simple_sets = ["[]]", "[^]]", "[abc]", "[a-z]", "[A-Za-z-]", r"[\t\.]"];
     for set in simple_sets {
         println!("Testing {set}");
-        let mut state = ParseState::new(set, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(set, &RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         while state.set_depth > 0 {
             assert!(state.step().unwrap().is_continue());
@@ -449,12 +449,12 @@ fn parsing_set_with_whitespace() {
             .try_parse::<16>(set)
             .unwrap();
         let ast = ast.as_slice();
-        assert_matches!(ast[0].node, Ast::SetStart { .. });
-        assert_eq!(ast[0].range.start, 0);
+        assert_matches!(ast[0].node, Node::SetStart { .. });
+        assert_eq!(ast[0].span.start, 0);
 
         let last_node = ast.last().unwrap();
-        assert_matches!(last_node.node, Ast::SetEnd);
-        assert_eq!(last_node.range.start, set.len() - 1);
+        assert_matches!(last_node.node, Node::SetEnd);
+        assert_eq!(last_node.span.start, set.len() - 1);
     }
 }
 
@@ -462,34 +462,34 @@ fn parsing_set_with_whitespace() {
 fn parsing_flags() {
     for flags_str in ["?i:", "?i)", "?isU:", "?-isU:"] {
         println!("Testing flags: {flags_str}");
-        let mut state = ParseState::new(flags_str, RegexOptions::DEFAULT);
+        let mut state = ParseState::new(flags_str, &RegexOptions::DEFAULT);
         let flags = state.parse_flags().unwrap();
         assert!(!flags.is_empty);
         assert_eq!(flags.ignore_whitespace, None);
         assert_eq!(state.pos, flags_str.len() - 1);
     }
 
-    let mut state = ParseState::new("?i", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("?i", &RegexOptions::DEFAULT);
     let err = state.parse_flags().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnfinishedFlags);
     assert_eq!(err.pos(), 0..2);
 
-    let mut state = ParseState::new("?i-:", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("?i-:", &RegexOptions::DEFAULT);
     let err = state.parse_flags().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnfinishedFlagsNegation);
     assert_eq!(err.pos(), 2..3);
 
-    let mut state = ParseState::new("?i--s:", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("?i--s:", &RegexOptions::DEFAULT);
     let err = state.parse_flags().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::RepeatedFlagNegation);
     assert_eq!(err.pos(), 3..4);
 
-    let mut state = ParseState::new("?iX:", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("?iX:", &RegexOptions::DEFAULT);
     let err = state.parse_flags().unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnsupportedFlag);
     assert_eq!(err.pos(), 2..3);
 
-    let mut state = ParseState::new("?ii:", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("?ii:", &RegexOptions::DEFAULT);
     let err = state.parse_flags().unwrap_err();
     assert_matches!(
         err.kind(),
@@ -499,7 +499,7 @@ fn parsing_flags() {
     );
     assert_eq!(err.pos(), 2..3);
 
-    let mut state = ParseState::new("?i-i:", RegexOptions::DEFAULT);
+    let mut state = ParseState::new("?i-i:", &RegexOptions::DEFAULT);
     let err = state.parse_flags().unwrap_err();
     assert_matches!(
         err.kind(),

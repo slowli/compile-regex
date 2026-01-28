@@ -70,8 +70,6 @@ fn unsupported_visitor_works() {
     assert!(is_unsupported(&ast));
 }
 
-// TODO: allow constraining group names, so that duplicate names can be hit
-
 fn sample_count() -> usize {
     if let Ok(cases) = env::var("PROPTEST_CASES") {
         cases
@@ -109,12 +107,11 @@ fn test_regex(ast_str: &str, ws: bool, stats: &mut Stats) -> bool {
     let ast = match parser.parse(ast_str) {
         Ok(ast) => ast,
         Err(err) => {
-            if validate_fn(ast_str).is_ok() {
-                panic!(
-                    "Expected {ast_str:?} to be unparseable, but its parsing succeeded\n\
-                     regex-syntax error: {err}"
-                );
-            };
+            assert!(
+                validate_fn(ast_str).is_err(),
+                "Expected {ast_str:?} to be unparseable, but its parsing succeeded\n\
+                 regex-syntax error: {err}"
+            );
 
             stats.invalid_asts += 1;
             return false;
@@ -128,9 +125,10 @@ fn test_regex(ast_str: &str, ws: bool, stats: &mut Stats) -> bool {
             }
             Err(err) => err,
         };
-        if !is_unsupported_error(err.kind()) {
-            panic!("regex {ast_str:?} w/ unsupported features failed with unexpected error: {err}");
-        }
+        assert!(
+            is_unsupported_error(err.kind()),
+            "regex {ast_str:?} w/ unsupported features failed with unexpected error: {err}"
+        );
 
         stats.unsupported += 1;
         return false;
@@ -156,7 +154,7 @@ fn test_valid_regex_is_accepted<const INPUT_LEN: usize>(
     rng_seed: u64,
     ws: bool,
     sample_count: usize,
-    replacement_chars: impl Iterator<Item = char> + Clone,
+    replacement_chars: &(impl Iterator<Item = char> + Clone),
 ) {
     /// Probability to remove a char when mutating a regex string.
     const REMOVE_P: f64 = 0.2;
@@ -212,20 +210,20 @@ fn test_valid_regex_is_accepted<const INPUT_LEN: usize>(
 
 #[test]
 fn valid_regex_is_accepted_ascii_256b_input() {
-    test_valid_regex_is_accepted::<256>(123, false, sample_count(), ASCII_CHARS);
+    test_valid_regex_is_accepted::<256>(123, false, sample_count(), &ASCII_CHARS);
 }
 
 #[test]
 fn valid_regex_is_accepted_256b_input_ws_replacement() {
-    test_valid_regex_is_accepted::<256>(555, false, sample_count(), ASCII_WHITESPACE.into_iter());
+    test_valid_regex_is_accepted::<256>(555, false, sample_count(), &ASCII_WHITESPACE.into_iter());
 }
 
 #[test]
 fn valid_ws_regex_is_accepted_ascii_256b_input() {
-    test_valid_regex_is_accepted::<256>(321, true, sample_count(), ASCII_CHARS);
+    test_valid_regex_is_accepted::<256>(321, true, sample_count(), &ASCII_CHARS);
 }
 
 #[test]
 fn valid_regex_is_accepted_ascii_1kb_input() {
-    test_valid_regex_is_accepted::<1_024>(111, false, sample_count(), ASCII_CHARS);
+    test_valid_regex_is_accepted::<1_024>(111, false, sample_count(), &ASCII_CHARS);
 }

@@ -6,24 +6,27 @@ use crate::utils::Stack;
 
 /// Range of chars. Similar to `Range<usize>`, but implements `Copy`.
 #[derive(Clone, Copy, PartialEq)]
-pub struct Range {
+pub struct Span {
+    /// Start of the range, inclusive.
     pub start: usize,
+    /// End of the range, exclusive.
     pub end: usize,
 }
 
-impl fmt::Debug for Range {
+impl fmt::Debug for Span {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}..{}", self.start, self.end)
     }
 }
 
-impl From<Range> for ops::Range<usize> {
-    fn from(range: Range) -> Self {
+impl From<Span> for ops::Range<usize> {
+    fn from(range: Span) -> Self {
         range.start..range.end
     }
 }
 
-impl Range {
+impl Span {
+    #[doc(hidden)] // used in fuzz tests; logically private
     pub const fn new(start: usize, end: usize) -> Self {
         assert!(start <= end);
         Self { start, end }
@@ -38,19 +41,24 @@ impl Range {
     }
 }
 
+/// Information about a counted repetition, e.g. `{2}`, `{2,3}`, or `{2,}`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CountedRepetition {
-    Exactly(Range),
-    AtLeast(Range),
-    Between(Range, Range),
+    /// Repetition with an exact count, e.g. `{2}`.
+    Exactly(Span),
+    /// Repetition with a minimum count, e.g. `{2,}`.
+    AtLeast(Span),
+    /// Repetition with a range of counts, e.g. `{2,3}`.
+    Between(Span, Span),
 }
 
+/// Syntax node of a regular expression.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
-pub enum Ast {
-    /// `.`
+pub enum Node {
+    /// Any char: `.`
     Dot,
-    /// `^`, `$`
+    /// Zero-length line assertion: `^`, `$`.
     LineAssertion,
     /// Perl character class: `\d`, `\s`, `\w` etc.
     PerlClass,
@@ -78,12 +86,15 @@ pub enum Ast {
         name: Option<GroupName>,
         /// Flags for the current group, e.g. `?x-m` in `(?x-m)` or in `(?x-m:.*)`.
         /// By design, this is mutually exclusive with `name`.
-        flags: Option<Range>,
+        flags: Option<Span>,
     },
     /// Group end `)`.
     GroupEnd,
     /// Set start `[`.
-    SetStart { negation: Option<Range> },
+    SetStart {
+        /// Negation `^`.
+        negation: Option<Span>,
+    },
     /// Set end `]`.
     SetEnd,
     /// Set operation: `&&`, `--` or `~~`.
@@ -97,28 +108,32 @@ pub enum Ast {
     Comment,
 }
 
+/// Information about a group / capture name.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GroupName {
     /// Span of the start marker, i.e., `?<` or `?P<`.
-    pub start: Range,
+    pub start: Span,
     /// Span of the name.
-    pub name: Range,
+    pub name: Span,
     /// Position of the end marker, i.e. `>`.
-    pub end: Range,
+    pub end: Span,
 }
 
+/// Spanned syntax node.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SyntaxSpan {
-    pub node: Ast,
-    pub range: Range,
+pub struct Spanned {
+    /// Syntax node.
+    pub node: Node,
+    /// Byte span of the regex string that maps to the node.
+    pub span: Span,
 }
 
-impl SyntaxSpan {
+impl Spanned {
     pub(crate) const DUMMY: Self = Self {
-        node: Ast::Dot,
-        range: Range { start: 0, end: 0 },
+        node: Node::Dot,
+        span: Span { start: 0, end: 0 },
     };
 }
 
 /// Linearized syntax tree.
-pub type Syntax<const LEN: usize = 128> = Stack<SyntaxSpan, LEN>;
+pub type Syntax<const LEN: usize = 128> = Stack<Spanned, LEN>;

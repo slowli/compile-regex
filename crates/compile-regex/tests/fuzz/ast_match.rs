@@ -4,7 +4,7 @@ use std::convert::Infallible;
 
 use arbitrary::{Arbitrary, Unstructured};
 use assert_matches::assert_matches;
-use compile_regex::{ErrorKind, RegexOptions, SyntaxSpan};
+use compile_regex::{ast as c_ast, ErrorKind, RegexOptions};
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use regex_syntax::{
     ast,
@@ -13,14 +13,14 @@ use regex_syntax::{
 
 use crate::{is_unsupported, sample_count};
 
-fn map_span(span: ast::Span) -> compile_regex::Range {
-    compile_regex::Range::new(span.start.offset, span.end.offset)
+fn map_span(span: ast::Span) -> c_ast::Span {
+    c_ast::Span::new(span.start.offset, span.end.offset)
 }
 
 #[derive(Debug)]
 struct SpansCollector<'a> {
     regex_str: &'a str,
-    spans: Vec<SyntaxSpan>,
+    spans: Vec<c_ast::Spanned>,
 }
 
 impl<'a> SpansCollector<'a> {
@@ -33,17 +33,15 @@ impl<'a> SpansCollector<'a> {
 
     fn push_lit(&mut self, lit: &ast::Literal) {
         let node = match lit.kind {
-            ast::LiteralKind::HexFixed(_) | ast::LiteralKind::HexBrace(_) => {
-                compile_regex::Ast::HexEscape
-            }
-            ast::LiteralKind::Meta => compile_regex::Ast::EscapedChar { meta: true },
-            ast::LiteralKind::Special(_) => compile_regex::Ast::EscapedLiteral,
+            ast::LiteralKind::HexFixed(_) | ast::LiteralKind::HexBrace(_) => c_ast::Node::HexEscape,
+            ast::LiteralKind::Meta => c_ast::Node::EscapedChar { meta: true },
+            ast::LiteralKind::Special(_) => c_ast::Node::EscapedLiteral,
             ast::LiteralKind::Verbatim => return,
-            _ => compile_regex::Ast::EscapedChar { meta: false },
+            _ => c_ast::Node::EscapedChar { meta: false },
         };
-        self.spans.push(SyntaxSpan {
+        self.spans.push(c_ast::Spanned {
             node,
-            range: map_span(lit.span),
+            span: map_span(lit.span),
         });
     }
 
@@ -51,141 +49,149 @@ impl<'a> SpansCollector<'a> {
         let start_offset = cls.span.start.offset;
         let end_offset = cls.span.end.offset;
 
-        self.spans.push(SyntaxSpan {
-            node: compile_regex::Ast::SetStart {
+        self.spans.push(c_ast::Spanned {
+            node: c_ast::Node::SetStart {
                 negation: cls.negated.then_some(DUMMY_RANGE),
             },
-            range: compile_regex::Range::new(start_offset, start_offset + 1),
+            span: c_ast::Span::new(start_offset, start_offset + 1),
         });
-        self.spans.push(SyntaxSpan {
-            node: compile_regex::Ast::SetEnd,
-            range: compile_regex::Range::new(end_offset - 1, end_offset),
+        self.spans.push(c_ast::Spanned {
+            node: c_ast::Node::SetEnd,
+            span: c_ast::Span::new(end_offset - 1, end_offset),
         });
+    }
+
+    fn push_group(&mut self, group: &ast::Group) {
+        let start_offset = group.span.start.offset;
+        let end_offset = group.span.end.offset;
+        let (name, flags) = match &group.kind {
+            ast::GroupKind::CaptureName { .. } => (Some(DUMMY_CAPTURE_NAME), None),
+            ast::GroupKind::NonCapturing(flags) if !flags.items.is_empty() => {
+                (None, Some(DUMMY_RANGE))
+            }
+            _ => (None, None),
+        };
+
+        self.spans.push(c_ast::Spanned {
+            node: c_ast::Node::GroupStart { name, flags },
+            span: c_ast::Span::new(start_offset, start_offset + 1),
+        });
+        self.spans.push(c_ast::Spanned {
+            node: c_ast::Node::GroupEnd,
+            span: c_ast::Span::new(end_offset - 1, end_offset),
+        });
+    }
+
+    fn push_alternation(&mut self, alt: &ast::Alternation) {
+        for neighbors in alt.asts.windows(2) {
+            let [prev, next] = neighbors else {
+                unreachable!();
+            };
+            let alt_char_range = prev.span().end.offset..next.span().start.offset;
+            assert!(!alt_char_range.is_empty());
+
+            let mut alt_char_pos = self.regex_str[alt_char_range].find('|').unwrap();
+            alt_char_pos += prev.span().end.offset;
+
+            self.spans.push(c_ast::Spanned {
+                node: c_ast::Node::Alteration,
+                span: c_ast::Span::new(alt_char_pos, alt_char_pos + 1),
+            });
+        }
     }
 }
 
-const DUMMY_RANGE: compile_regex::Range = compile_regex::Range::new(usize::MAX - 1, usize::MAX);
-const DUMMY_CAPTURE_NAME: compile_regex::GroupName = compile_regex::GroupName {
+const DUMMY_RANGE: c_ast::Span = c_ast::Span::new(usize::MAX - 1, usize::MAX);
+const DUMMY_CAPTURE_NAME: c_ast::GroupName = c_ast::GroupName {
     start: DUMMY_RANGE,
     name: DUMMY_RANGE,
     end: DUMMY_RANGE,
 };
 
 impl ast::Visitor for SpansCollector<'_> {
-    type Output = Vec<SyntaxSpan>;
+    type Output = Vec<c_ast::Spanned>;
     type Err = Infallible;
 
     fn finish(mut self) -> Result<Self::Output, Self::Err> {
-        self.spans.sort_unstable_by_key(|span| span.range.start);
+        self.spans
+            .sort_unstable_by_key(|spanned| spanned.span.start);
         Ok(self.spans)
     }
 
     fn visit_pre(&mut self, ast: &Ast) -> Result<(), Self::Err> {
         match ast {
-            Ast::Empty(_) => { /* Do nothing */ }
+            Ast::Empty(_) | Ast::Concat(_) => { /* Do nothing */ }
             Ast::Flags(flags) => {
                 let start = flags.span.start.offset;
-                self.spans.push(SyntaxSpan {
-                    node: compile_regex::Ast::GroupStart {
+                self.spans.push(c_ast::Spanned {
+                    node: c_ast::Node::GroupStart {
                         name: None,
                         flags: Some(DUMMY_RANGE),
                     },
-                    range: compile_regex::Range::new(start, start + 1),
+                    span: c_ast::Span::new(start, start + 1),
                 });
 
                 let end = flags.span.end.offset;
-                self.spans.push(SyntaxSpan {
-                    node: compile_regex::Ast::GroupEnd,
-                    range: compile_regex::Range::new(end - 1, end),
+                self.spans.push(c_ast::Spanned {
+                    node: c_ast::Node::GroupEnd,
+                    span: c_ast::Span::new(end - 1, end),
                 });
             }
             Ast::Literal(lit) => {
                 self.push_lit(lit);
             }
-            Ast::Dot(dot) => self.spans.push(SyntaxSpan {
-                node: compile_regex::Ast::Dot,
-                range: map_span(**dot),
+            Ast::Dot(dot) => self.spans.push(c_ast::Spanned {
+                node: c_ast::Node::Dot,
+                span: map_span(**dot),
             }),
             Ast::Assertion(assertion) => {
-                self.spans.push(SyntaxSpan {
+                self.spans.push(c_ast::Spanned {
                     node: match assertion.kind {
                         ast::AssertionKind::StartLine | ast::AssertionKind::EndLine => {
-                            compile_regex::Ast::LineAssertion
+                            c_ast::Node::LineAssertion
                         }
-                        _ => compile_regex::Ast::StdAssertion,
+                        _ => c_ast::Node::StdAssertion,
                     },
-                    range: map_span(assertion.span),
+                    span: map_span(assertion.span),
                 });
             }
             Ast::ClassUnicode(_) => unreachable!(),
             Ast::ClassPerl(perl) => {
-                self.spans.push(SyntaxSpan {
-                    node: compile_regex::Ast::PerlClass,
-                    range: map_span(perl.span),
+                self.spans.push(c_ast::Spanned {
+                    node: c_ast::Node::PerlClass,
+                    span: map_span(perl.span),
                 });
             }
             Ast::ClassBracketed(cls) => {
                 self.push_bracketed(cls);
             }
             Ast::Repetition(rep) => {
-                let range = map_span(rep.op.span);
+                let span = map_span(rep.op.span);
                 let node = match &rep.op.kind {
                     ast::RepetitionKind::Range(rep_range) => {
                         let rep = match rep_range {
                             ast::RepetitionRange::Exactly(_) => {
-                                compile_regex::CountedRepetition::Exactly(DUMMY_RANGE)
+                                c_ast::CountedRepetition::Exactly(DUMMY_RANGE)
                             }
                             ast::RepetitionRange::AtLeast(_) => {
-                                compile_regex::CountedRepetition::AtLeast(DUMMY_RANGE)
+                                c_ast::CountedRepetition::AtLeast(DUMMY_RANGE)
                             }
                             ast::RepetitionRange::Bounded(..) => {
-                                compile_regex::CountedRepetition::Between(DUMMY_RANGE, DUMMY_RANGE)
+                                c_ast::CountedRepetition::Between(DUMMY_RANGE, DUMMY_RANGE)
                             }
                         };
-                        compile_regex::Ast::CountedRepetition(rep)
+                        c_ast::Node::CountedRepetition(rep)
                     }
-                    _ => compile_regex::Ast::UncountedRepetition,
+                    _ => c_ast::Node::UncountedRepetition,
                 };
-                self.spans.push(SyntaxSpan { node, range });
+                self.spans.push(c_ast::Spanned { node, span });
             }
             Ast::Group(group) => {
-                let start_offset = group.span.start.offset;
-                let end_offset = group.span.end.offset;
-                let (name, flags) = match &group.kind {
-                    ast::GroupKind::CaptureName { .. } => (Some(DUMMY_CAPTURE_NAME), None),
-                    ast::GroupKind::NonCapturing(flags) if !flags.items.is_empty() => {
-                        (None, Some(DUMMY_RANGE))
-                    }
-                    _ => (None, None),
-                };
-
-                self.spans.push(SyntaxSpan {
-                    node: compile_regex::Ast::GroupStart { name, flags },
-                    range: compile_regex::Range::new(start_offset, start_offset + 1),
-                });
-                self.spans.push(SyntaxSpan {
-                    node: compile_regex::Ast::GroupEnd,
-                    range: compile_regex::Range::new(end_offset - 1, end_offset),
-                });
+                self.push_group(group);
             }
             Ast::Alternation(alt) => {
-                for neighbors in alt.asts.windows(2) {
-                    let [prev, next] = neighbors else {
-                        unreachable!();
-                    };
-                    let alt_char_range = prev.span().end.offset..next.span().start.offset;
-                    assert!(!alt_char_range.is_empty());
-
-                    let mut alt_char_pos = self.regex_str[alt_char_range].find('|').unwrap();
-                    alt_char_pos += prev.span().end.offset;
-
-                    self.spans.push(SyntaxSpan {
-                        node: compile_regex::Ast::Alteration,
-                        range: compile_regex::Range::new(alt_char_pos, alt_char_pos + 1),
-                    });
-                }
+                self.push_alternation(alt);
             }
-            Ast::Concat(_) => {}
         }
         Ok(())
     }
@@ -199,26 +205,26 @@ impl ast::Visitor for SpansCollector<'_> {
                 let rhs_start = range.end.span.start.offset;
                 let mut range_pos = self.regex_str[lhs_end..rhs_start].find('-').unwrap();
                 range_pos += lhs_end;
-                self.spans.push(SyntaxSpan {
-                    node: compile_regex::Ast::SetRange,
-                    range: compile_regex::Range::new(range_pos, range_pos + 1),
+                self.spans.push(c_ast::Spanned {
+                    node: c_ast::Node::SetRange,
+                    span: c_ast::Span::new(range_pos, range_pos + 1),
                 });
 
                 self.push_lit(&range.end);
             }
             ast::ClassSetItem::Ascii(cls) => {
-                self.spans.push(SyntaxSpan {
-                    node: compile_regex::Ast::AsciiClass,
-                    range: map_span(cls.span),
+                self.spans.push(c_ast::Spanned {
+                    node: c_ast::Node::AsciiClass,
+                    span: map_span(cls.span),
                 });
             }
             ast::ClassSetItem::Literal(lit) => {
                 self.push_lit(lit);
             }
             ast::ClassSetItem::Perl(perl) => {
-                self.spans.push(SyntaxSpan {
-                    node: compile_regex::Ast::PerlClass,
-                    range: map_span(perl.span),
+                self.spans.push(c_ast::Spanned {
+                    node: c_ast::Node::PerlClass,
+                    span: map_span(perl.span),
                 });
             }
             ast::ClassSetItem::Bracketed(cls) => {
@@ -243,19 +249,19 @@ impl ast::Visitor for SpansCollector<'_> {
         let mut op_pos = self.regex_str[lhs_end..rhs_start].find(op_str).unwrap();
         op_pos += lhs_end;
 
-        self.spans.push(SyntaxSpan {
-            node: compile_regex::Ast::SetOp,
-            range: compile_regex::Range::new(op_pos, op_pos + 2),
+        self.spans.push(c_ast::Spanned {
+            node: c_ast::Node::SetOp,
+            span: c_ast::Span::new(op_pos, op_pos + 2),
         });
         Ok(())
     }
 }
 
-fn assert_asts_match(regex: &str, expected: &Ast, mut actual: Vec<SyntaxSpan>) {
+fn assert_asts_match(regex: &str, expected: &Ast, mut actual: Vec<c_ast::Spanned>) {
     actual.retain_mut(|span| {
         // Erase spans that are not captured by `regex-syntax`
         match &mut span.node {
-            compile_regex::Ast::GroupStart { name, flags } => {
+            c_ast::Node::GroupStart { name, flags } => {
                 if let Some(flags) = flags {
                     *flags = DUMMY_RANGE;
                 }
@@ -264,24 +270,24 @@ fn assert_asts_match(regex: &str, expected: &Ast, mut actual: Vec<SyntaxSpan>) {
                 }
             }
 
-            compile_regex::Ast::SetStart {
+            c_ast::Node::SetStart {
                 negation: Some(negation),
             } => {
                 *negation = DUMMY_RANGE;
             }
 
-            compile_regex::Ast::CountedRepetition(rep) => match rep {
-                compile_regex::CountedRepetition::Exactly(range)
-                | compile_regex::CountedRepetition::AtLeast(range) => {
+            c_ast::Node::CountedRepetition(rep) => match rep {
+                c_ast::CountedRepetition::Exactly(range)
+                | c_ast::CountedRepetition::AtLeast(range) => {
                     *range = DUMMY_RANGE;
                 }
-                compile_regex::CountedRepetition::Between(from, to) => {
+                c_ast::CountedRepetition::Between(from, to) => {
                     *from = DUMMY_RANGE;
                     *to = DUMMY_RANGE;
                 }
             },
 
-            compile_regex::Ast::Comment => return false,
+            c_ast::Node::Comment => return false,
             _ => { /* do nothing */ }
         }
         true

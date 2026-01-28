@@ -1,19 +1,19 @@
-use core::ops;
-use std::collections::HashMap;
+use std::{collections::HashMap, ops};
 
 use assert_matches::assert_matches;
 
 use super::*;
+use crate::ast::{CountedRepetition, GroupName, Node, Spanned, Syntax};
 
-impl From<ops::Range<usize>> for Range {
+impl From<ops::Range<usize>> for ast::Span {
     fn from(range: ops::Range<usize>) -> Self {
         Self::new(range.start, range.end)
     }
 }
 
-fn span(range: ops::Range<usize>, node: Ast) -> SyntaxSpan {
-    SyntaxSpan {
-        range: range.into(),
+fn span(range: ops::Range<usize>, node: Node) -> Spanned {
+    Spanned {
+        span: range.into(),
         node,
     }
 }
@@ -26,11 +26,11 @@ fn parsing_ast() {
     assert_eq!(
         AST.as_slice(),
         &[
-            span(0..1, Ast::LineAssertion),
-            span(3..7, Ast::HexEscape),
+            span(0..1, Node::LineAssertion),
+            span(3..7, Node::HexEscape),
             span(
                 8..9,
-                Ast::GroupStart {
+                Node::GroupStart {
                     name: Some(GroupName {
                         start: (9..11).into(),
                         name: (11..16).into(),
@@ -39,21 +39,21 @@ fn parsing_ast() {
                     flags: None,
                 }
             ),
-            span(17..19, Ast::EscapedLiteral),
-            span(19..20, Ast::Alteration),
-            span(20..22, Ast::EscapedChar { meta: true }),
-            span(22..24, Ast::StdAssertion),
-            span(24..25, Ast::GroupEnd),
+            span(17..19, Node::EscapedLiteral),
+            span(19..20, Node::Alteration),
+            span(20..22, Node::EscapedChar { meta: true }),
+            span(22..24, Node::StdAssertion),
+            span(24..25, Node::GroupEnd),
             span(
                 25..32,
-                Ast::CountedRepetition(CountedRepetition::Between(
+                Node::CountedRepetition(CountedRepetition::Between(
                     (26..27).into(),
                     (29..30).into(),
                 ))
             ),
-            span(32..34, Ast::PerlClass),
-            span(34..35, Ast::UncountedRepetition),
-            span(35..36, Ast::LineAssertion),
+            span(32..34, Node::PerlClass),
+            span(34..35, Node::UncountedRepetition),
+            span(35..36, Node::LineAssertion),
         ]
     );
 
@@ -72,21 +72,21 @@ fn parsing_ast_with_whitespace() {
     const AST: Syntax = RegexOptions::DEFAULT.ignore_whitespace(true).parse(REGEX);
 
     let expected_spans = [
-        (r"\x40", Ast::HexEscape),
-        ("# ascii escape", Ast::Comment),
-        (r"\t", Ast::EscapedLiteral),
-        (r"\.", Ast::EscapedChar { meta: true }),
-        (r"\ ", Ast::EscapedChar { meta: false }),
-        (r"\>", Ast::StdAssertion),
-        ("# named group", Ast::Comment),
-        ("# non-greedy repetition", Ast::Comment),
-        (r"\d", Ast::PerlClass),
-        ("+", Ast::UncountedRepetition),
+        (r"\x40", Node::HexEscape),
+        ("# ascii escape", Node::Comment),
+        (r"\t", Node::EscapedLiteral),
+        (r"\.", Node::EscapedChar { meta: true }),
+        (r"\ ", Node::EscapedChar { meta: false }),
+        (r"\>", Node::StdAssertion),
+        ("# named group", Node::Comment),
+        ("# non-greedy repetition", Node::Comment),
+        (r"\d", Node::PerlClass),
+        ("+", Node::UncountedRepetition),
     ];
     let actual_spans: HashMap<_, _> = AST
         .as_slice()
         .iter()
-        .map(|span| (&REGEX[ops::Range::from(span.range)], span.node))
+        .map(|span| (&REGEX[ops::Range::from(span.span)], span.node))
         .collect();
 
     for (span_str, ast) in expected_spans {
@@ -107,17 +107,17 @@ fn parsing_set_ast() {
     assert_eq!(
         ast.as_slice(),
         [
-            span(0..1, Ast::SetStart { negation: None }),
+            span(0..1, Node::SetStart { negation: None }),
             span(
                 1..2,
-                Ast::SetStart {
+                Node::SetStart {
                     negation: Some((2..3).into())
                 }
             ),
-            span(5..6, Ast::SetEnd),
-            span(6..8, Ast::SetOp),
-            span(8..10, Ast::EscapedLiteral),
-            span(10..11, Ast::SetEnd),
+            span(5..6, Node::SetEnd),
+            span(6..8, Node::SetOp),
+            span(8..10, Node::EscapedLiteral),
+            span(10..11, Node::SetEnd),
         ]
     );
     let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(regex).unwrap();
@@ -128,11 +128,11 @@ fn parsing_set_ast() {
     assert_eq!(
         ast.as_slice(),
         [
-            span(0..1, Ast::SetStart { negation: None }),
-            span(1..10, Ast::AsciiClass),
-            span(10..12, Ast::SetOp),
-            span(12..22, Ast::AsciiClass),
-            span(23..24, Ast::SetEnd),
+            span(0..1, Node::SetStart { negation: None }),
+            span(1..10, Node::AsciiClass),
+            span(10..12, Node::SetOp),
+            span(12..22, Node::AsciiClass),
+            span(23..24, Node::SetEnd),
         ]
     );
     let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(regex).unwrap();
@@ -143,10 +143,10 @@ fn parsing_set_ast() {
     assert_eq!(
         ast.as_slice(),
         [
-            span(0..1, Ast::SetStart { negation: None }),
-            span(2..3, Ast::SetRange),
-            span(4..6, Ast::SetOp),
-            span(8..9, Ast::SetEnd),
+            span(0..1, Node::SetStart { negation: None }),
+            span(2..3, Node::SetRange),
+            span(4..6, Node::SetOp),
+            span(8..9, Node::SetEnd),
         ]
     );
     let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(regex).unwrap();
@@ -166,15 +166,15 @@ fn parsing_set_ast_with_whitespace() {
         [
             span(
                 0..1,
-                Ast::SetStart {
+                Node::SetStart {
                     negation: Some((2..3).into()),
                 }
             ),
-            span(4..14, Ast::Comment),
-            span(23..24, Ast::SetRange),
-            span(27..44, Ast::Comment),
-            span(51..53, Ast::SetOp),
-            span(61..62, Ast::SetEnd),
+            span(4..14, Node::Comment),
+            span(23..24, Node::SetRange),
+            span(27..44, Node::Comment),
+            span(51..53, Node::SetOp),
+            span(61..62, Node::SetEnd),
         ]
     );
 
@@ -195,26 +195,26 @@ fn creating_ast_with_flags() {
         [
             span(
                 0..1,
-                Ast::GroupStart {
+                Node::GroupStart {
                     name: None,
                     flags: Some((1..4).into())
                 }
             ),
-            span(4..5, Ast::GroupEnd),
-            span(5..6, Ast::LineAssertion),
+            span(4..5, Node::GroupEnd),
+            span(5..6, Node::LineAssertion),
             span(
                 6..7,
-                Ast::GroupStart {
+                Node::GroupStart {
                     name: None,
                     flags: Some((7..10).into())
                 }
             ),
-            span(11..13, Ast::PerlClass),
+            span(11..13, Node::PerlClass),
             span(
                 13..16,
-                Ast::CountedRepetition(CountedRepetition::Exactly((14..15).into())),
+                Node::CountedRepetition(CountedRepetition::Exactly((14..15).into())),
             ),
-            span(16..17, Ast::GroupEnd),
+            span(16..17, Node::GroupEnd),
         ]
     );
 
@@ -234,18 +234,18 @@ fn ast_with_dynamic_whitespace_control() {
         [
             span(
                 0..1,
-                Ast::GroupStart {
+                Node::GroupStart {
                     flags: Some((1..3).into()),
                     name: None,
                 }
             ),
-            span(3..4, Ast::GroupEnd),
-            span(13..15, Ast::PerlClass),
-            span(15..16, Ast::UncountedRepetition),
-            span(17..25, Ast::Comment),
+            span(3..4, Node::GroupEnd),
+            span(13..15, Node::PerlClass),
+            span(15..16, Node::UncountedRepetition),
+            span(17..25, Node::Comment),
             span(
                 34..35,
-                Ast::GroupStart {
+                Node::GroupStart {
                     flags: None,
                     name: Some(GroupName {
                         start: (35..37).into(),
@@ -256,19 +256,19 @@ fn ast_with_dynamic_whitespace_control() {
             ),
             span(
                 43..44,
-                Ast::GroupStart {
+                Node::GroupStart {
                     flags: Some((44..47).into()),
                     name: None,
                 }
             ),
-            span(47..48, Ast::GroupEnd),
-            span(49..51, Ast::PerlClass),
+            span(47..48, Node::GroupEnd),
+            span(49..51, Node::PerlClass),
             span(
                 51..54,
-                Ast::CountedRepetition(CountedRepetition::Exactly((52..53).into())),
+                Node::CountedRepetition(CountedRepetition::Exactly((52..53).into())),
             ),
-            span(54..55, Ast::GroupEnd),
-            span(56..70, Ast::Comment),
+            span(54..55, Node::GroupEnd),
+            span(56..70, Node::Comment),
         ]
     );
 
@@ -316,9 +316,9 @@ fn parsing_regex_with_many_comments() {
     let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
     let mut comment_count = 0;
     for span in &dynamic_ast {
-        if matches!(span.node, Ast::Comment) {
+        if matches!(span.node, Node::Comment) {
             comment_count += 1;
-            let comment_str = &REGEX[ops::Range::from(span.range)];
+            let comment_str = &REGEX[ops::Range::from(span.span)];
             assert!(comment_str.starts_with('#'), "{comment_str}");
             assert!(comment_str.ends_with("comment"), "{comment_str}");
         }
@@ -333,10 +333,10 @@ fn parsing_boundaries() {
     assert_eq!(
         AST.as_slice(),
         [
-            span(0..2, Ast::StdAssertion),
-            span(2..3, Ast::Alteration),
-            span(3..4, Ast::Dot),
-            span(4..5, Ast::Alteration),
+            span(0..2, Node::StdAssertion),
+            span(2..3, Node::Alteration),
+            span(3..4, Node::Dot),
+            span(4..5, Node::Alteration),
         ]
     );
 }
