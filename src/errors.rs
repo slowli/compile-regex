@@ -78,6 +78,8 @@ pub enum ErrorKind {
     // FIXME: support whitespace control
     UnsupportedWhitespaceFlag,
     RepeatedFlag { contradicting: bool },
+    DisallowedWhitespace,
+    DisallowedComment,
 
     AstOverflow,
 }
@@ -132,6 +134,8 @@ impl ErrorKind {
             Self::RepeatedFlag {
                 contradicting: false,
             } => "repeated flag value",
+            Self::DisallowedWhitespace => "disallowed whitespace (e.g., inside a hex escape)",
+            Self::DisallowedComment => "disallowed comment (e.g., inside a hex escape)",
             Self::AstOverflow => "too many AST nodes",
         }
     }

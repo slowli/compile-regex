@@ -494,3 +494,27 @@ fn countable_repetition_with_space() {
     assert_matches!(err.kind(), ErrorKind::EmptyDecimal);
     assert_eq!(err.pos(), 4..5);
 }
+
+#[test]
+fn disallowed_whitespace_errors() {
+    let err = RegexOptions::DEFAULT
+        .ignore_whitespace(true)
+        .try_validate(".{2 3}")
+        .unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::DisallowedWhitespace);
+    assert_eq!(err.pos(), 3..4);
+
+    let err = RegexOptions::DEFAULT
+        .ignore_whitespace(true)
+        .try_validate(".{23, 12 3}")
+        .unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::DisallowedWhitespace);
+    assert_eq!(err.pos(), 8..9);
+
+    let err = RegexOptions::DEFAULT
+        .ignore_whitespace(true)
+        .try_validate(".{2# what?\n3}")
+        .unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::DisallowedComment);
+    assert_eq!(err.pos(), 3..4);
+}

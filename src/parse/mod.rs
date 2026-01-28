@@ -294,6 +294,19 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         Ok(())
     }
 
+    /// Fails if the parser is currently at ASCII whitespace and whitespace is ignored.
+    const fn disallowed_error(&self, pos: usize) -> Error {
+        debug_assert!(self.ignore_whitespace);
+
+        let err = if self.regex_bytes[pos] == b'#' {
+            ErrorKind::DisallowedComment
+        } else {
+            debug_assert!(self.regex_bytes[pos].is_ascii_whitespace());
+            ErrorKind::DisallowedWhitespace
+        };
+        err.with_position(pos..pos + 1)
+    }
+
     /// Peeks the first non-whitespace / comment char after the specified position.
     const fn peek_whitespace(&self, mut pos: usize) -> Option<char> {
         let mut is_in_comment = false;
@@ -435,6 +448,17 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             self.pos += 1;
         }
 
+        if self.ignore_whitespace {
+            // Look ahead and check whether the next char ignoring whitespace is a digit.
+            // If so, the decimal would be valid as per regex-syntax, but it looks confusing, so we
+            // raise an error.
+            if let Some(ch) = self.peek_whitespace(pos) {
+                if ch.is_ascii_digit() {
+                    return Err(self.disallowed_error(pos));
+                }
+            }
+        }
+
         Ok((decimal, Range::new(start_pos, pos)))
     }
 
@@ -557,10 +581,18 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         while !self.is_eof() && is_valid_char(self.regex_bytes[self.pos]) {
             self.pos += 1;
-            // `regex-syntax` allows whitespace / comments *inside* the specifier, which looks weird, so we don't allow it.
         }
         let end_pos = self.pos;
         const_try!(self.gobble_whitespace_and_comments());
+
+        if self.ignore_whitespace {
+            // `regex-syntax` allows whitespace / comments *inside* the specifier, which looks weird, so we don't allow it.
+            if let Some(ch) = self.peek_whitespace(self.pos) {
+                if ch.is_ascii() && is_valid_char(ch as u8) {
+                    return Err(self.disallowed_error(end_pos));
+                }
+            }
+        }
 
         if self.is_eof() || self.regex_bytes[self.pos] != b'}' {
             return Err(self.error(start_pos, ErrorKind::UnfinishedWordBoundary));
@@ -617,6 +649,14 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 b'0'..=b'9' => digit - b'0',
                 b'a'..=b'f' => digit - b'a' + 10,
                 b'A'..=b'F' => digit - b'A' + 10,
+                _ if self.ignore_whitespace && digit.is_ascii_whitespace() => {
+                    // Return a more precise error
+                    return Err(self.error(self.pos - 1, ErrorKind::DisallowedWhitespace));
+                }
+                b'#' if self.ignore_whitespace => {
+                    // Return a more precise error
+                    return Err(self.error(self.pos - 1, ErrorKind::DisallowedComment));
+                }
                 _ => return Err(self.error(start_pos, ErrorKind::InvalidHex)),
             };
             if self.pos >= first_digit_pos + 8 {
@@ -662,6 +702,14 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 b'0'..=b'9' => digit - b'0',
                 b'a'..=b'f' => digit - b'a' + 10,
                 b'A'..=b'F' => digit - b'A' + 10,
+                _ if self.ignore_whitespace && digit.is_ascii_whitespace() => {
+                    // Return a more precise error
+                    return Err(self.error(self.pos - 1, ErrorKind::DisallowedWhitespace));
+                }
+                b'#' if self.ignore_whitespace => {
+                    // Return a more precise error
+                    return Err(self.error(self.pos - 1, ErrorKind::DisallowedComment));
+                }
                 _ => return Err(self.error(start_pos, ErrorKind::InvalidHex)),
             };
             // No overflow can happen.
@@ -884,10 +932,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         let mut set_depth = 1;
         while set_depth > 0 {
+            const_try!(self.gobble_whitespace_and_comments());
             if self.is_eof() {
                 return Err(self.error(self.pos, ErrorKind::UnfinishedSet));
             }
-            const_try!(self.gobble_whitespace_and_comments());
 
             let op_start = self.pos;
             if self.gobble_any(&[b"&&", b"--", b"~~"]) {
