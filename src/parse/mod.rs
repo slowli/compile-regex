@@ -1151,7 +1151,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
     ///
     /// **Important.** The caller is responsible for rewinding the parser position if `Ok(false)` is returned.
     const fn try_parse_ascii_class(&mut self) -> bool {
-        const CLASSES: &[&[u8]] = &[b"alnum", b"alpha", b"ascii", b"blank", b"cntrl", b"digit"];
+        const CLASSES: &[&[u8]] = &[
+            b"alnum", b"alpha", b"ascii", b"blank", b"cntrl", b"digit", b"graph", b"lower",
+            b"print", b"punct", b"space", b"upper", b"word", b"xdigit",
+        ];
 
         debug_assert!(self.regex_bytes[self.pos] == b'[');
         self.pos += 1;
