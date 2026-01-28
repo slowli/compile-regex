@@ -194,3 +194,58 @@ fn creating_ast_with_flags() {
         ]
     );
 }
+
+#[test]
+fn ast_with_dynamic_whitespace_control() {
+    const AST: Syntax = parse(
+        r"(?x)
+        \d+ # digits
+        (?<color>(?-x)#\d{6}) # literal hash",
+    );
+
+    assert_eq!(
+        AST.as_slice(),
+        [
+            span(
+                0..1,
+                Ast::GroupStart {
+                    flags: Some((1..3).into()),
+                    name: None,
+                }
+            ),
+            span(3..4, Ast::GroupEnd),
+            span(13..15, Ast::PerlClass),
+            span(15..16, Ast::UncountedRepetition),
+            span(17..25, Ast::Comment),
+            span(
+                34..35,
+                Ast::GroupStart {
+                    flags: None,
+                    name: Some(GroupName {
+                        start: (35..37).into(),
+                        name: (37..42).into(),
+                        end: (42..43).into(),
+                    }),
+                }
+            ),
+            span(
+                43..44,
+                Ast::GroupStart {
+                    flags: Some((44..47).into()),
+                    name: None,
+                }
+            ),
+            span(47..48, Ast::GroupEnd),
+            span(49..51, Ast::PerlClass),
+            span(
+                51..54,
+                Ast::CountedRepetition {
+                    min_or_exact_count: (52..53).into(),
+                    max_count: None,
+                }
+            ),
+            span(54..55, Ast::GroupEnd),
+            span(56..70, Ast::Comment),
+        ]
+    );
+}

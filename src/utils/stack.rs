@@ -33,6 +33,15 @@ impl<T: Copy, const N: usize> Stack<T, N> {
             Ok(())
         }
     }
+
+    pub(crate) const fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            None
+        } else {
+            self.len -= 1;
+            Some(self.inner[self.len])
+        }
+    }
 }
 
 impl<T, const N: usize> Stack<T, N> {

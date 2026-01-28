@@ -66,6 +66,7 @@ pub enum ErrorKind {
     NonAsciiCaptureName,
     UnfinishedGroup,
     NonMatchingGroupEnd,
+    GroupDepthOverflow,
     UnfinishedSet,
     InvalidRangeStart,
     InvalidRangeEnd,
@@ -75,9 +76,8 @@ pub enum ErrorKind {
     UnfinishedFlagsNegation,
     RepeatedFlagNegation,
     UnsupportedFlag,
-    // FIXME: support whitespace control
-    UnsupportedWhitespaceFlag,
     RepeatedFlag { contradicting: bool },
+
     DisallowedWhitespace,
     DisallowedComment,
 
@@ -118,6 +118,7 @@ impl ErrorKind {
             Self::NonAsciiCaptureName => "non-ASCII capture names are not supported",
             Self::UnfinishedGroup => "unfinished group",
             Self::NonMatchingGroupEnd => "non-matching group end",
+            Self::GroupDepthOverflow => "too deeply nested group",
             Self::UnfinishedSet => "unfinished set",
             Self::InvalidEscapeInSet => "invalid escape in set [..]",
             Self::InvalidRangeStart => "invalid range start",
@@ -127,7 +128,6 @@ impl ErrorKind {
             Self::UnfinishedFlagsNegation => "unfinished flags negation",
             Self::RepeatedFlagNegation => "repeated flag negation",
             Self::UnsupportedFlag => "unsupported flag",
-            Self::UnsupportedWhitespaceFlag => "unsupported ignored whitespace flag `-x`",
             Self::RepeatedFlag {
                 contradicting: true,
             } => "contradicting flag value",

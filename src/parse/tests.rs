@@ -292,7 +292,7 @@ fn parsing_group() {
         let mut state = ParseState::new(group, RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
         assert_eq!(state.pos, group.len() - 1);
-        assert_eq!(state.group_depth, 1);
+        assert_eq!(state.groups.len(), 1);
     }
 
     let mut state = ParseState::new("(", RegexOptions::DEFAULT);
@@ -365,6 +365,36 @@ fn regex_does_not_allow_whitespace_in_group_start() {
         .unwrap_err();
     assert_matches!(err.kind(), ErrorKind::InvalidCaptureName);
     assert_eq!(err.pos(), 3..4);
+}
+
+#[test]
+fn controlling_whitespace_in_groups_via_flags() {
+    let regex = "(?x) .*";
+    let mut state = ParseState::new(regex, RegexOptions::DEFAULT);
+    assert!(!state.ignore_whitespace);
+
+    assert!(state.step().unwrap().is_continue());
+    assert_eq!(state.pos, 4);
+    assert!(state.ignore_whitespace);
+    assert_eq!(state.groups.len(), 0);
+}
+
+#[test]
+fn controlling_whitespace_in_groups_via_group_flags() {
+    let regex = "(?x: .* ){2,}";
+    let mut state = ParseState::new(regex, RegexOptions::DEFAULT);
+    assert!(!state.ignore_whitespace);
+
+    assert!(state.step().unwrap().is_continue());
+    assert_eq!(state.pos, 4);
+    assert!(state.ignore_whitespace);
+    assert_eq!(state.groups.len(), 1);
+
+    while state.groups.len() > 0 {
+        assert!(state.step().unwrap().is_continue());
+    }
+    assert_eq!(state.pos, 9);
+    assert!(!state.ignore_whitespace);
 }
 
 #[test]

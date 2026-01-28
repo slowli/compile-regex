@@ -6,7 +6,7 @@ use core::ops;
 
 use crate::{
     is_escapable_char, is_meta_char,
-    utils::{ceil_char_boundary, is_char_boundary, split_first_char},
+    utils::{ceil_char_boundary, is_char_boundary, split_first_char, Stack},
     Ast, Error, ErrorKind, GroupName, Range, Syntax, SyntaxSpan,
 };
 
@@ -84,7 +84,7 @@ impl PrimitiveKind {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Flags {
     is_empty: bool,
     ignore_whitespace: Option<bool>,
@@ -97,13 +97,29 @@ struct Backup {
     span_count: usize,
 }
 
+/// Maximum supported group depth.
+const GROUP_DEPTH: usize = 16;
+
+#[derive(Debug, Clone, Copy)]
+struct GroupFrame {
+    /// `ignore_whitespace` value when the group was pushed to the stack (= one that should be set
+    /// when the group is popped from the stack).
+    prev_ignore_whitespace: bool,
+}
+
+impl GroupFrame {
+    const DUMMY: Self = Self {
+        prev_ignore_whitespace: false,
+    };
+}
+
 #[derive(Debug)]
 pub(crate) struct ParseState<'a, const CAP: usize = 0> {
     /// Always a valid UTF-8 string.
     regex_bytes: &'a [u8],
     /// Points to the next char to be parsed in `regex_bytes`.
     pos: usize,
-    group_depth: usize,
+    groups: Stack<GroupFrame, GROUP_DEPTH>,
     is_empty_last_item: bool,
     ignore_whitespace: bool,
     spans: Option<Syntax<CAP>>,
@@ -120,7 +136,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         Self {
             regex_bytes: regex.as_bytes(),
             pos: 0,
-            group_depth: 0,
+            groups: Stack::new(GroupFrame::DUMMY),
             is_empty_last_item: true,
             ignore_whitespace: options.ignore_whitespace,
             spans: if with_ast {
@@ -767,16 +783,13 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
         // FIXME: check that the name is unique
 
-        let mut flags_pos = None;
+        let mut spanned_flags = None;
         let mut is_standalone_flags = false;
         if !is_named && self.regex_bytes[self.pos] == b'?' {
             let flags_start = self.pos;
             let flags = const_try!(self.parse_flags());
-            if matches!(flags.ignore_whitespace, Some(true)) {
-                return Err(self.error(flags_start, ErrorKind::UnsupportedWhitespaceFlag));
-            }
             if !flags.is_empty {
-                flags_pos = Some(Range::new(flags_start, self.pos));
+                spanned_flags = Some((flags, Range::new(flags_start, self.pos)));
             }
 
             let ch = self.regex_bytes[self.pos];
@@ -798,13 +811,42 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         };
 
         if let Some(spans) = &mut self.spans {
-            if let Ast::GroupStart { flags, .. } = &mut spans.index_mut(start_ast_idx).node {
-                *flags = flags_pos;
+            if let (Ast::GroupStart { flags, .. }, Some((_, span))) =
+                (&mut spans.index_mut(start_ast_idx).node, &spanned_flags)
+            {
+                *flags = Some(*span);
             }
         }
 
+        let new_ignore_whitespace = if let Some((
+            Flags {
+                ignore_whitespace: Some(ws),
+                ..
+            },
+            _,
+        )) = spanned_flags
+        {
+            ws
+        } else {
+            self.ignore_whitespace
+        };
+
+        let push_result = self.groups.push(GroupFrame {
+            prev_ignore_whitespace: if is_standalone_flags {
+                // Will set `ignore_whitespace` in the *surrounding* group once the flags pseudo-group
+                // is popped below.
+                new_ignore_whitespace
+            } else {
+                let prev = self.ignore_whitespace;
+                self.ignore_whitespace = new_ignore_whitespace;
+                prev
+            },
+        });
+        if push_result.is_err() {
+            return Err(self.error(start_pos, ErrorKind::GroupDepthOverflow));
+        }
+
         // This works fine with the standalone flags like `(?m-u)` because we immediately close the pseudo-group.
-        self.group_depth += 1;
         if is_standalone_flags {
             const_try!(self.end_group());
         }
@@ -920,10 +962,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         debug_assert!(self.regex_bytes[self.pos] == b')');
         self.pos += 1;
 
-        if self.group_depth == 0 {
+        if let Some(popped) = self.groups.pop() {
+            self.ignore_whitespace = popped.prev_ignore_whitespace;
+        } else {
             return Err(self.error(start_pos, ErrorKind::NonMatchingGroupEnd));
         }
-        self.group_depth -= 1;
         self.push_ast(start_pos, Ast::GroupEnd)
     }
 
@@ -1100,7 +1143,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         const_try!(self.gobble_whitespace_and_comments());
 
         let Some((current_ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
-            if self.group_depth > 0 {
+            if self.groups.len() != 0 {
                 return Err(self.error(self.regex_bytes.len(), ErrorKind::UnfinishedGroup));
             }
             return Ok(ops::ControlFlow::Break(()));
