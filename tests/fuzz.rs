@@ -10,11 +10,16 @@
 use std::{env, ops};
 
 use arbitrary::{Arbitrary, Unstructured};
-use compile_regex::{try_validate, ErrorKind};
+use compile_regex::{try_validate, Error, ErrorKind, RegexOptions};
 use rand::{rngs::StdRng, seq::IteratorRandom, Rng, SeedableRng};
-use regex_syntax::ast::{self, parse::Parser, Ast, ClassSetItem};
+use regex_syntax::ast::{
+    self,
+    parse::{Parser, ParserBuilder},
+    Ast, ClassSetItem,
+};
 
 const ASCII_CHARS: ops::RangeInclusive<char> = ' '..='\x7f';
+const ASCII_WHITESPACE: [char; 4] = [' ', '\t', '\n', '#'];
 
 struct UnsupportedChecker;
 
@@ -27,14 +32,8 @@ impl ast::Visitor for UnsupportedChecker {
     }
 
     fn visit_pre(&mut self, ast: &Ast) -> Result<(), Self::Err> {
-        fn is_unsupported_flags(flags: &ast::Flags) -> bool {
-            flags.flag_state(ast::Flag::IgnoreWhitespace) == Some(true)
-        }
-
         match ast {
             Ast::ClassUnicode(_) => Err(()),
-            Ast::Flags(flags) if is_unsupported_flags(&flags.flags) => Err(()),
-            Ast::Group(group) if group.flags().is_some_and(is_unsupported_flags) => Err(()),
             _ => Ok(()),
         }
     }
@@ -52,10 +51,7 @@ fn is_unsupported(ast: &Ast) -> bool {
 }
 
 fn is_unsupported_error(err: &ErrorKind) -> bool {
-    matches!(
-        err,
-        ErrorKind::UnicodeClassesNotSupported | ErrorKind::UnsupportedWhitespaceFlag
-    )
+    matches!(err, ErrorKind::UnicodeClassesNotSupported)
 }
 
 #[test]
@@ -70,15 +66,6 @@ fn unsupported_visitor_works() {
     assert!(is_unsupported(&ast));
     let ast = Parser::new().parse(r"[a\p1]{3}").unwrap();
     assert!(is_unsupported(&ast));
-
-    let ast = Parser::new().parse(r"(?x).*").unwrap();
-    assert!(is_unsupported(&ast));
-    let ast = Parser::new().parse(r"(?-sx)").unwrap();
-    assert!(!is_unsupported(&ast));
-    let ast = Parser::new().parse(r"(?sx:)").unwrap();
-    assert!(is_unsupported(&ast));
-    let ast = Parser::new().parse(r"(?-x).*").unwrap();
-    assert!(!is_unsupported(&ast));
 }
 
 // TODO: allow constraining group names, so that duplicate names can be hit
@@ -97,25 +84,34 @@ fn sample_count() -> usize {
 struct Stats {
     total: usize,
     skips: usize,
-    errors: usize,
     invalid_asts: usize,
     unsupported: usize,
+    stricter_ws_control: usize,
 }
 
 /// Returns `true` iff `ast_str` is a valid regex as per both parsers.
-fn test_regex(ast_str: &str, stats: &mut Stats) -> bool {
+fn test_regex(ast_str: &str, ws: bool, stats: &mut Stats) -> bool {
     stats.total += 1;
 
-    let ast = match Parser::new().parse(ast_str) {
+    let validate_fn: fn(&str) -> Result<(), Error> = if ws {
+        |regex| {
+            RegexOptions::DEFAULT
+                .ignore_whitespace(true)
+                .try_validate(regex)
+        }
+    } else {
+        try_validate
+    };
+
+    let mut parser = ParserBuilder::new().ignore_whitespace(ws).build();
+    let ast = match parser.parse(ast_str) {
         Ok(ast) => ast,
         Err(err) => {
-            if try_validate(ast_str).is_ok() {
-                println!(
+            if validate_fn(ast_str).is_ok() {
+                panic!(
                     "Expected {ast_str:?} to be unparseable, but its parsing succeeded\n\
-                        regex-syntax error: {err}"
+                     regex-syntax error: {err}"
                 );
-                stats.errors += 1;
-                return false;
             };
 
             stats.invalid_asts += 1;
@@ -124,29 +120,30 @@ fn test_regex(ast_str: &str, stats: &mut Stats) -> bool {
     };
 
     if is_unsupported(&ast) {
-        let err = match try_validate(ast_str) {
+        let err = match validate_fn(ast_str) {
             Ok(()) => {
-                println!("expected regex {ast_str:?} with unsupported features to fail, but it succeeded");
-                stats.errors += 1;
-                return false;
+                panic!("expected regex {ast_str:?} with unsupported features to fail, but it succeeded");
             }
             Err(err) => err,
         };
         if !is_unsupported_error(err.kind()) {
-            println!(
-                "regex {ast_str:?} w/ unsupported features failed with unexpected error: {err}"
-            );
-            stats.errors += 1;
-            return false;
+            panic!("regex {ast_str:?} w/ unsupported features failed with unexpected error: {err}");
         }
 
         stats.unsupported += 1;
         return false;
     }
 
-    if let Err(err) = try_validate(ast_str) {
-        println!("failed validating {ast_str:?}: {err}");
-        stats.errors += 1;
+    if let Err(err) = validate_fn(ast_str) {
+        if matches!(
+            err.kind(),
+            ErrorKind::DisallowedWhitespace | ErrorKind::DisallowedComment
+        ) {
+            // TODO: check that whitespace is ignored at error location
+            stats.stricter_ws_control += 1;
+        } else {
+            panic!("failed validating {ast_str:?}: {err}");
+        }
         false
     } else {
         true
@@ -154,26 +151,27 @@ fn test_regex(ast_str: &str, stats: &mut Stats) -> bool {
 }
 
 fn test_valid_regex_is_accepted<const INPUT_LEN: usize>(
+    rng_seed: u64,
+    ws: bool,
     sample_count: usize,
-    replacement_chars: ops::RangeInclusive<char>,
+    replacement_chars: impl Iterator<Item = char> + Clone,
 ) {
-    const RNG_SEED: u64 = 123;
     /// Probability to remove a char when mutating a regex string.
     const REMOVE_P: f64 = 0.2;
     /// Probability to insert a char when mutating a regex string.
     const INSERT_P: f64 = 0.2;
 
-    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+    let mut rng = StdRng::seed_from_u64(rng_seed);
     let mut stats = Stats::default();
     for i in 0..sample_count {
-        let input: [u8; 1_024] = rng.random();
+        let input: [u8; INPUT_LEN] = rng.random();
         let Ok(ast) = Ast::arbitrary(&mut Unstructured::new(&input)) else {
             stats.skips += 1;
             continue;
         };
 
         let ast_str = ast.to_string();
-        if !test_regex(&ast_str, &mut stats) || ast_str.is_empty() {
+        if !test_regex(&ast_str, ws, &mut stats) || ast_str.is_empty() {
             continue;
         }
 
@@ -195,11 +193,11 @@ fn test_valid_regex_is_accepted<const INPUT_LEN: usize>(
                 ast_str.remove(mutated_pos);
             }
             if is_inserted {
-                let ch = rng.random_range(replacement_chars.clone());
+                let ch = replacement_chars.clone().choose(&mut rng).unwrap();
                 ast_str.insert(mutated_pos, ch);
             }
 
-            test_regex(&ast_str, &mut stats);
+            test_regex(&ast_str, ws, &mut stats);
         }
 
         if (i + 1) % 10_000 == 0 {
@@ -208,17 +206,24 @@ fn test_valid_regex_is_accepted<const INPUT_LEN: usize>(
     }
 
     println!("Test stats: {stats:?}");
-    if stats.errors > 0 {
-        panic!("There were {} errors (printed above)", stats.errors);
-    }
 }
 
 #[test]
 fn valid_regex_is_accepted_ascii_256b_input() {
-    test_valid_regex_is_accepted::<256>(sample_count(), ASCII_CHARS);
+    test_valid_regex_is_accepted::<256>(123, false, sample_count(), ASCII_CHARS);
+}
+
+#[test]
+fn valid_regex_is_accepted_256b_input_ws_replacement() {
+    test_valid_regex_is_accepted::<256>(555, false, sample_count(), ASCII_WHITESPACE.into_iter());
+}
+
+#[test]
+fn valid_ws_regex_is_accepted_ascii_256b_input() {
+    test_valid_regex_is_accepted::<256>(321, true, sample_count(), ASCII_CHARS);
 }
 
 #[test]
 fn valid_regex_is_accepted_ascii_1kb_input() {
-    test_valid_regex_is_accepted::<1_024>(sample_count(), ASCII_CHARS);
+    test_valid_regex_is_accepted::<1_024>(111, false, sample_count(), ASCII_CHARS);
 }
