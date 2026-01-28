@@ -404,6 +404,9 @@ fn parsing_set() {
         println!("Testing {set}");
         let mut state = ParseState::new(set, RegexOptions::DEFAULT);
         assert!(state.step().unwrap().is_continue());
+        while state.set_depth > 0 {
+            assert!(state.step().unwrap().is_continue());
+        }
         assert_eq!(state.pos, set.len());
     }
 
@@ -414,22 +417,18 @@ fn parsing_set() {
         assert_matches!(err.kind(), ErrorKind::InvalidEscapeInSet);
     }
 
-    let mut state = ParseState::new("[]", RegexOptions::DEFAULT);
-    let err = state.step().unwrap_err();
+    let err = try_validate("[]").unwrap_err();
     assert_matches!(err.kind(), ErrorKind::UnfinishedSet);
 
-    let mut state = ParseState::new(r"[\>-a]", RegexOptions::DEFAULT);
-    let err = state.step().unwrap_err();
+    let err = try_validate(r"[\>-a]").unwrap_err();
     assert_matches!(err.kind(), ErrorKind::InvalidRangeStart);
     assert_eq!(err.pos(), 1..3);
 
-    let mut state = ParseState::new(r"[a-\>]", RegexOptions::DEFAULT);
-    let err = state.step().unwrap_err();
+    let err = try_validate(r"[a-\>]").unwrap_err();
     assert_matches!(err.kind(), ErrorKind::InvalidRangeEnd);
     assert_eq!(err.pos(), 3..5);
 
-    let mut state = ParseState::new(r"[_a-Z]", RegexOptions::DEFAULT);
-    let err = state.step().unwrap_err();
+    let err = try_validate(r"[_a-Z]").unwrap_err();
     assert_matches!(err.kind(), ErrorKind::InvalidRange);
     assert_eq!(err.pos(), 2..5);
 }

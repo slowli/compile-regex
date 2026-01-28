@@ -2,7 +2,7 @@
 //!
 //! https://github.com/rust-lang/regex/blob/master/regex-syntax/src/ast/parse.rs
 
-use core::{fmt, ops};
+use core::{fmt, mem, ops};
 
 use crate::{
     is_escapable_char, is_meta_char,
@@ -67,6 +67,27 @@ impl RegexOptions {
         match self.try_parse(regex) {
             Ok(spans) => spans,
             Err(err) => err.compile_panic(regex),
+        }
+    }
+
+    pub fn try_parse_to_vec(self, regex: &str) -> Result<Vec<SyntaxSpan>, Error> {
+        /// Max number of AST spans added during a single parsing step.
+        // FIXME: either don't capture comments, capture a single comment, or split parsing whitespace into steps somehow
+        const STEP_CAP: usize = 8;
+
+        let mut state = ParseState::<STEP_CAP>::custom(regex, self, true);
+        let mut syntax = Vec::new();
+        loop {
+            let step_result = state.step()?;
+            // Empty all captured spans to `syntax`. Since we never read from spans in the parser,
+            // this doesn't influence subsequent steps.
+            let spans = state.spans.as_mut().unwrap();
+            let spans = mem::replace(spans, Syntax::new(SyntaxSpan::DUMMY));
+            syntax.extend_from_slice(spans.as_slice());
+
+            if step_result.is_break() {
+                return Ok(syntax);
+            }
         }
     }
 }
@@ -178,6 +199,7 @@ pub(crate) struct ParseState<'a, const CAP: usize = 0> {
     pos: usize,
     groups: Stack<GroupFrame, GROUP_DEPTH>,
     group_names: GroupNames<MAX_NAMED_GROUPS>,
+    set_depth: usize,
     is_empty_last_item: bool,
     ignore_whitespace: bool,
     spans: Option<Syntax<CAP>>,
@@ -196,6 +218,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             pos: 0,
             groups: Stack::new(GroupFrame::DUMMY),
             group_names: GroupNames::new(),
+            set_depth: 0,
             is_empty_last_item: true,
             ignore_whitespace: options.ignore_whitespace,
             spans: if with_ast {
@@ -1030,46 +1053,6 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         self.push_ast(start_pos, Ast::GroupEnd)
     }
 
-    const fn parse_set_class(&mut self) -> Result<(), Error> {
-        const_try!(self.parse_set_class_start());
-
-        let mut set_depth = 1;
-        while set_depth > 0 {
-            const_try!(self.gobble_whitespace_and_comments());
-            if self.is_eof() {
-                return Err(self.error(self.pos, ErrorKind::UnfinishedSet));
-            }
-
-            let op_start = self.pos;
-            if self.gobble_any(&[b"&&", b"--", b"~~"]) {
-                const_try!(self.push_ast(op_start, Ast::SetOp));
-                continue;
-            }
-
-            let ch = self.regex_bytes[self.pos];
-            match ch {
-                b'[' => {
-                    // Try parse the ASCII char class first. If that fails, treat it as an embedded class.
-                    if self.try_parse_ascii_class() {
-                        const_try!(self.push_ast(op_start, Ast::AsciiClass));
-                    } else {
-                        self.pos = op_start; // Restore the parser position
-                        const_try!(self.parse_set_class_start());
-                        set_depth += 1;
-                    }
-                }
-                b']' => {
-                    self.pos += 1;
-                    const_try!(self.push_ast(op_start, Ast::SetEnd));
-                    set_depth -= 1;
-                }
-                _ => const_try!(self.parse_set_class_range()),
-            }
-        }
-
-        Ok(())
-    }
-
     /// Parses the start of the set class, including the opening `[` and any specially handled chars
     /// (`^`, `-` and `]`).
     const fn parse_set_class_start(&mut self) -> Result<(), Error> {
@@ -1110,6 +1093,42 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 self.pos += 1;
                 const_try!(self.gobble_whitespace_and_comments());
             }
+        }
+        Ok(())
+    }
+
+    const fn set_step(&mut self) -> Result<(), Error> {
+        debug_assert!(self.set_depth > 0);
+
+        const_try!(self.gobble_whitespace_and_comments());
+        if self.is_eof() {
+            return Err(self.error(self.pos, ErrorKind::UnfinishedSet));
+        }
+
+        let op_start = self.pos;
+        if self.gobble_any(&[b"&&", b"--", b"~~"]) {
+            const_try!(self.push_ast(op_start, Ast::SetOp));
+            return Ok(());
+        }
+
+        let ch = self.regex_bytes[self.pos];
+        match ch {
+            b'[' => {
+                // Try parse the ASCII char class first. If that fails, treat it as an embedded class.
+                if self.try_parse_ascii_class() {
+                    const_try!(self.push_ast(op_start, Ast::AsciiClass));
+                } else {
+                    self.pos = op_start; // Restore the parser position
+                    const_try!(self.parse_set_class_start());
+                    self.set_depth += 1;
+                }
+            }
+            b']' => {
+                self.pos += 1;
+                const_try!(self.push_ast(op_start, Ast::SetEnd));
+                self.set_depth -= 1;
+            }
+            _ => const_try!(self.parse_set_class_range()),
         }
         Ok(())
     }
@@ -1200,6 +1219,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
     }
 
     pub(crate) const fn step(&mut self) -> Result<ops::ControlFlow<()>, Error> {
+        if self.set_depth > 0 {
+            const_try!(self.set_step());
+            return Ok(ops::ControlFlow::Continue(()));
+        }
+
         const_try!(self.gobble_whitespace_and_comments());
 
         let Some((current_ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
@@ -1225,7 +1249,8 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 self.is_empty_last_item = true;
             }
             '[' => {
-                const_try!(self.parse_set_class());
+                const_try!(self.parse_set_class_start());
+                self.set_depth = 1;
                 self.is_empty_last_item = false;
             }
             '?' | '*' | '+' => {

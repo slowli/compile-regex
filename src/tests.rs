@@ -20,7 +20,8 @@ fn span(range: ops::Range<usize>, node: Ast) -> SyntaxSpan {
 
 #[test]
 fn parsing_ast() {
-    const AST: Syntax = parse(r"^wh\x40t(?<group>\t|\.\>){3, 5}?\d+$");
+    const REGEX: &str = r"^wh\x40t(?<group>\t|\.\>){3, 5}?\d+$";
+    const AST: Syntax = parse(REGEX);
 
     assert_eq!(
         AST.as_slice(),
@@ -55,6 +56,9 @@ fn parsing_ast() {
             span(35..36, Ast::LineAssertion),
         ]
     );
+
+    let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
+    assert_eq!(dynamic_ast, AST.as_slice());
 }
 
 #[test]
@@ -88,11 +92,18 @@ fn parsing_ast_with_whitespace() {
     for (span_str, ast) in expected_spans {
         assert_eq!(actual_spans[&span_str], ast, "{span_str:?}");
     }
+
+    let dynamic_ast = RegexOptions::DEFAULT
+        .ignore_whitespace(true)
+        .try_parse_to_vec(REGEX)
+        .unwrap();
+    assert_eq!(dynamic_ast, AST.as_slice());
 }
 
 #[test]
 fn parsing_set_ast() {
-    let ast: Syntax = parse(r"[[^ab]~~\t]");
+    let regex = r"[[^ab]~~\t]";
+    let ast: Syntax = parse(regex);
     assert_eq!(
         ast.as_slice(),
         [
@@ -109,8 +120,11 @@ fn parsing_set_ast() {
             span(10..11, Ast::SetEnd),
         ]
     );
+    let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(regex).unwrap();
+    assert_eq!(dynamic_ast, ast.as_slice());
 
-    let ast: Syntax = parse(r"[[:digit:]&&[:^cntrl:]-]");
+    let regex = r"[[:digit:]&&[:^cntrl:]-]";
+    let ast: Syntax = parse(regex);
     assert_eq!(
         ast.as_slice(),
         [
@@ -121,8 +135,11 @@ fn parsing_set_ast() {
             span(23..24, Ast::SetEnd),
         ]
     );
+    let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(regex).unwrap();
+    assert_eq!(dynamic_ast, ast.as_slice());
 
-    let ast: Syntax = parse(r"[0-9--4-]");
+    let regex = r"[0-9--4-]";
+    let ast: Syntax = parse(regex);
     assert_eq!(
         ast.as_slice(),
         [
@@ -132,16 +149,17 @@ fn parsing_set_ast() {
             span(8..9, Ast::SetEnd),
         ]
     );
+    let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(regex).unwrap();
+    assert_eq!(dynamic_ast, ast.as_slice());
 }
 
 #[test]
 fn parsing_set_ast_with_whitespace() {
-    const AST: Syntax = RegexOptions::DEFAULT.ignore_whitespace(true).parse(
-        r"[ ^ # negated!
-          0 - 9 # another comment
-          -- 4-
-        ]",
-    );
+    const REGEX: &str = r"[ ^ # negated!
+      0 - 9 # another comment
+      -- 4-
+    ]";
+    const AST: Syntax = RegexOptions::DEFAULT.ignore_whitespace(true).parse(REGEX);
 
     assert_eq!(
         AST.as_slice(),
@@ -153,17 +171,24 @@ fn parsing_set_ast_with_whitespace() {
                 }
             ),
             span(4..14, Ast::Comment),
-            span(27..28, Ast::SetRange),
-            span(31..48, Ast::Comment),
-            span(59..61, Ast::SetOp),
-            span(73..74, Ast::SetEnd),
+            span(23..24, Ast::SetRange),
+            span(27..44, Ast::Comment),
+            span(51..53, Ast::SetOp),
+            span(61..62, Ast::SetEnd),
         ]
     );
+
+    let dynamic_ast = RegexOptions::DEFAULT
+        .ignore_whitespace(true)
+        .try_parse_to_vec(REGEX)
+        .unwrap();
+    assert_eq!(dynamic_ast, AST.as_slice());
 }
 
 #[test]
 fn creating_ast_with_flags() {
-    const AST: Syntax = parse(r"(?us)^(?-x:\d{5})");
+    const REGEX: &str = r"(?us)^(?-x:\d{5})";
+    const AST: Syntax = parse(REGEX);
 
     assert_eq!(
         AST.as_slice(),
@@ -195,15 +220,17 @@ fn creating_ast_with_flags() {
             span(16..17, Ast::GroupEnd),
         ]
     );
+
+    let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
+    assert_eq!(dynamic_ast, AST.as_slice());
 }
 
 #[test]
 fn ast_with_dynamic_whitespace_control() {
-    const AST: Syntax = parse(
-        r"(?x)
+    const REGEX: &str = r"(?x)
         \d+ # digits
-        (?<color>(?-x)#\d{6}) # literal hash",
-    );
+        (?<color>(?-x)#\d{6}) # literal hash";
+    const AST: Syntax = parse(REGEX);
 
     assert_eq!(
         AST.as_slice(),
@@ -250,6 +277,9 @@ fn ast_with_dynamic_whitespace_control() {
             span(56..70, Ast::Comment),
         ]
     );
+
+    let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
+    assert_eq!(dynamic_ast, AST.as_slice());
 }
 
 #[test]
@@ -268,4 +298,27 @@ fn duplicate_capture_name() {
     let err = try_validate(regex).unwrap_err();
     assert_matches!(err.kind(), ErrorKind::DuplicateCaptureName { prev_pos } if *prev_pos == (3..4));
     assert_eq!(err.pos(), 20..21);
+}
+
+#[test]
+fn parsing_regex_with_many_comments() {
+    const REGEX: &str = r"(?x) \d{
+        # comment
+        # comment
+        # comment
+        # comment
+        # comment
+        1,
+        # comment
+        # comment
+        # comment
+        # comment
+        # comment
+        # comment
+        # comment
+        2 }
+    ";
+
+    let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
+    panic!("{dynamic_ast:#?}");
 }
