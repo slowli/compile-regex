@@ -5,6 +5,7 @@
 use core::{fmt, mem, ops};
 
 use crate::{
+    ast::CountedRepetition,
     is_escapable_char, is_meta_char,
     utils::{ceil_char_boundary, is_char_boundary, split_first_char, Stack},
     Ast, Error, ErrorKind, GroupName, Range, Syntax, SyntaxSpan,
@@ -290,13 +291,14 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
     }
 
     const fn push_ast(&mut self, start_pos: usize, node: Ast) -> Result<(), Error> {
+        self.push_custom_ast(Range::new(start_pos, self.pos), node)
+    }
+
+    const fn push_custom_ast(&mut self, range: Range, node: Ast) -> Result<(), Error> {
         if let Some(spans) = &mut self.spans {
-            let span = SyntaxSpan {
-                node,
-                range: Range::new(start_pos, self.pos),
-            };
+            let span = SyntaxSpan { node, range };
             if spans.push(span).is_err() {
-                return Err(self.error(start_pos, ErrorKind::AstOverflow));
+                return Err(self.error(range.start, ErrorKind::AstOverflow));
             }
         }
         Ok(())
@@ -363,31 +365,42 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             return Ok(());
         }
 
-        let mut comment_start = None;
+        // Start of the very first comment.
+        let mut comment_range = None::<Range>;
+        let mut is_in_comment = false;
         while !self.is_eof() {
             let Some((ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
                 break; // reached EOF
             };
 
-            if let Some(start) = comment_start {
+            if is_in_comment {
                 if ch == '\n' {
-                    const_try!(self.push_ast(start, Ast::Comment));
-                    comment_start = None;
+                    is_in_comment = false;
+                    if let Some(range) = &mut comment_range {
+                        range.end = self.pos;
+                    }
                 }
                 self.pos = next_pos;
             } else if ch.is_ascii_whitespace() {
                 // TODO: support non-ASCII whitespace? `char::is_whitespace` is const only since Rust 1.87
                 self.pos = next_pos;
             } else if ch == '#' {
-                comment_start = Some(self.pos);
+                is_in_comment = true;
+                if comment_range.is_none() {
+                    comment_range = Some(Range::new(self.pos, self.pos + 1));
+                }
                 self.pos = next_pos;
             } else {
                 break;
             }
         }
 
-        if let Some(start) = comment_start {
-            const_try!(self.push_ast(start, Ast::Comment));
+        if let Some(mut range) = comment_range {
+            if is_in_comment {
+                // Reached EOF without a closing '\n', so we need to update the comment span here.
+                range.end = self.pos;
+            }
+            const_try!(self.push_custom_ast(range, Ast::Comment));
         }
         Ok(())
     }
@@ -503,10 +516,11 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             self.gobble(b"?");
             const_try!(self.push_ast(
                 start_pos,
-                Ast::CountedRepetition {
-                    min_or_exact_count: min_count_span,
-                    max_count: max_count_span,
-                }
+                Ast::CountedRepetition(match max_count_span {
+                    Some(span) if span.is_empty() => CountedRepetition::AtLeast(min_count_span),
+                    Some(span) => CountedRepetition::Between(min_count_span, span),
+                    None => CountedRepetition::Exactly(min_count_span),
+                })
             ));
             Ok(())
         } else {
@@ -639,7 +653,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             }
             b'b' => {
                 if matches!(self.ascii_char(), Some(b'{')) {
-                    const_try!(self.try_parse_word_boundary());
+                    const_try!(self.try_parse_word_boundary(start_pos));
                 }
                 Ok(PrimitiveKind::Other)
             }
@@ -655,7 +669,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
     }
 
-    const fn try_parse_word_boundary(&mut self) -> Result<(), Error> {
+    const fn try_parse_word_boundary(&mut self, escape_start: usize) -> Result<(), Error> {
         const fn is_valid_char(ch: u8) -> bool {
             matches!(ch, b'A'..=b'Z' | b'a'..=b'z' | b'-')
         }
@@ -702,7 +716,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
 
         self.pos += 1; // gobble '}'
-        const_try!(self.push_ast(start_pos, Ast::StdAssertion));
+        const_try!(self.push_ast(escape_start, Ast::StdAssertion));
         Ok(())
     }
 

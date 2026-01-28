@@ -24,14 +24,25 @@ impl From<Range> for ops::Range<usize> {
 }
 
 impl Range {
-    pub(crate) const fn new(start: usize, end: usize) -> Self {
+    pub const fn new(start: usize, end: usize) -> Self {
         assert!(start <= end);
         Self { start, end }
+    }
+
+    pub(crate) const fn is_empty(&self) -> bool {
+        self.end == self.start
     }
 
     pub(crate) const fn len(&self) -> usize {
         self.end - self.start
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CountedRepetition {
+    Exactly(Range),
+    AtLeast(Range),
+    Between(Range, Range),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -55,10 +66,7 @@ pub enum Ast {
     /// Uncounted repetition, like `*`, `+` or `?`, with an optional non-greedy marker.
     UncountedRepetition,
     /// Counted repetition, like `{3}` or `{3,5}`, with an optional non-greedy marker.
-    CountedRepetition {
-        min_or_exact_count: Range,
-        max_count: Option<Range>,
-    },
+    CountedRepetition(CountedRepetition),
     /// Hexadecimal escape, like `\x0C` or `\u{123}`.
     HexEscape,
 
@@ -84,7 +92,8 @@ pub enum Ast {
     SetRange,
     /// ASCII char class, e.g., `[:alnum:]`.
     AsciiClass,
-    /// Comment, e.g., `# Test`.
+    /// Comment, e.g., `# Test`. May span over multiple lines, where comments may be preceded by whitespace
+    /// (but no AST nodes).
     Comment,
 }
 
@@ -99,7 +108,6 @@ pub struct GroupName {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
 pub struct SyntaxSpan {
     pub node: Ast,
     pub range: Range,

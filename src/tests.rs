@@ -46,10 +46,10 @@ fn parsing_ast() {
             span(24..25, Ast::GroupEnd),
             span(
                 25..32,
-                Ast::CountedRepetition {
-                    min_or_exact_count: (26..27).into(),
-                    max_count: Some((29..30).into()),
-                }
+                Ast::CountedRepetition(CountedRepetition::Between(
+                    (26..27).into(),
+                    (29..30).into(),
+                ))
             ),
             span(32..34, Ast::PerlClass),
             span(34..35, Ast::UncountedRepetition),
@@ -212,10 +212,7 @@ fn creating_ast_with_flags() {
             span(11..13, Ast::PerlClass),
             span(
                 13..16,
-                Ast::CountedRepetition {
-                    min_or_exact_count: (14..15).into(),
-                    max_count: None,
-                }
+                Ast::CountedRepetition(CountedRepetition::Exactly((14..15).into())),
             ),
             span(16..17, Ast::GroupEnd),
         ]
@@ -268,10 +265,7 @@ fn ast_with_dynamic_whitespace_control() {
             span(49..51, Ast::PerlClass),
             span(
                 51..54,
-                Ast::CountedRepetition {
-                    min_or_exact_count: (52..53).into(),
-                    max_count: None,
-                }
+                Ast::CountedRepetition(CountedRepetition::Exactly((52..53).into())),
             ),
             span(54..55, Ast::GroupEnd),
             span(56..70, Ast::Comment),
@@ -320,5 +314,14 @@ fn parsing_regex_with_many_comments() {
     ";
 
     let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
-    panic!("{dynamic_ast:#?}");
+    let mut comment_count = 0;
+    for span in &dynamic_ast {
+        if matches!(span.node, Ast::Comment) {
+            comment_count += 1;
+            let comment_str = &REGEX[ops::Range::from(span.range)];
+            assert!(comment_str.starts_with('#'), "{comment_str}");
+            assert!(comment_str.ends_with("comment"), "{comment_str}");
+        }
+    }
+    assert_eq!(comment_count, 2, "{dynamic_ast:#?}");
 }

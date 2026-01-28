@@ -1,5 +1,5 @@
 pub use crate::{
-    ast::{Ast, GroupName, Range, Syntax, SyntaxSpan},
+    ast::{Ast, CountedRepetition, GroupName, Range, Syntax, SyntaxSpan},
     errors::{Error, ErrorKind},
     parse::RegexOptions,
 };
