@@ -64,9 +64,12 @@ pub enum ErrorKind {
     EmptyCaptureName,
     InvalidCaptureName,
     NonAsciiCaptureName,
+    DuplicateCaptureName {
+        /// Byte range of the previous capture name definition.
+        prev_pos: ops::Range<usize>,
+    },
     UnfinishedGroup,
     NonMatchingGroupEnd,
-    GroupDepthOverflow,
     UnfinishedSet,
     InvalidRangeStart,
     InvalidRangeEnd,
@@ -76,12 +79,15 @@ pub enum ErrorKind {
     UnfinishedFlagsNegation,
     RepeatedFlagNegation,
     UnsupportedFlag,
-    RepeatedFlag { contradicting: bool },
+    RepeatedFlag {
+        contradicting: bool,
+    },
 
     DisallowedWhitespace,
     DisallowedComment,
-
     AstOverflow,
+    GroupDepthOverflow,
+    NamedGroupOverflow,
 }
 
 impl fmt::Display for ErrorKind {
@@ -116,6 +122,7 @@ impl ErrorKind {
             Self::EmptyCaptureName => "empty capture name",
             Self::InvalidCaptureName => "invalid capture name",
             Self::NonAsciiCaptureName => "non-ASCII capture names are not supported",
+            Self::DuplicateCaptureName { .. } => "duplicate capture name",
             Self::UnfinishedGroup => "unfinished group",
             Self::NonMatchingGroupEnd => "non-matching group end",
             Self::GroupDepthOverflow => "too deeply nested group",
@@ -137,6 +144,7 @@ impl ErrorKind {
             Self::DisallowedWhitespace => "disallowed whitespace (e.g., inside a hex escape)",
             Self::DisallowedComment => "disallowed comment (e.g., inside a hex escape)",
             Self::AstOverflow => "too many AST nodes",
+            Self::NamedGroupOverflow => "too many named groups",
         }
     }
 

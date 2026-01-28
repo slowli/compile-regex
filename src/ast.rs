@@ -28,6 +28,10 @@ impl Range {
         assert!(start <= end);
         Self { start, end }
     }
+
+    pub(crate) const fn len(&self) -> usize {
+        self.end - self.start
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

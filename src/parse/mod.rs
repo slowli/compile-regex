@@ -2,7 +2,7 @@
 //!
 //! https://github.com/rust-lang/regex/blob/master/regex-syntax/src/ast/parse.rs
 
-use core::ops;
+use core::{fmt, ops};
 
 use crate::{
     is_escapable_char, is_meta_char,
@@ -99,6 +99,8 @@ struct Backup {
 
 /// Maximum supported group depth.
 const GROUP_DEPTH: usize = 16;
+/// Maximum supported number of named groups.
+const MAX_NAMED_GROUPS: usize = 64;
 
 #[derive(Debug, Clone, Copy)]
 struct GroupFrame {
@@ -113,6 +115,61 @@ impl GroupFrame {
     };
 }
 
+struct GroupNames<const CAP: usize> {
+    items: [Range; CAP],
+    len: usize,
+}
+
+impl<const CAP: usize> fmt::Debug for GroupNames<CAP> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (items, _) = self.items.split_at(self.len);
+        formatter.debug_list().entries(items).finish()
+    }
+}
+
+impl<const CAP: usize> GroupNames<CAP> {
+    const fn new() -> Self {
+        Self {
+            items: [Range::new(0, 0); CAP],
+            len: 0,
+        }
+    }
+
+    const fn insert(&mut self, item: Range, regex_bytes: &[u8]) -> Result<(), Error> {
+        const fn bytes_eq(bytes: &[u8], x: Range, y: Range) -> bool {
+            let mut i = 0;
+            while i < x.len() {
+                if bytes[x.start + i] != bytes[y.start + i] {
+                    return false;
+                }
+                i += 1;
+            }
+            true
+        }
+
+        if self.len == CAP {
+            return Err(ErrorKind::NamedGroupOverflow.with_position(item.start..item.end));
+        }
+
+        let item_len = item.len();
+        let mut i = 0;
+        while i < self.len {
+            let prev_pos = self.items[i];
+            if prev_pos.len() == item_len && bytes_eq(regex_bytes, prev_pos, item) {
+                let err = ErrorKind::DuplicateCaptureName {
+                    prev_pos: prev_pos.start..prev_pos.end,
+                };
+                return Err(err.with_position(item.start..item.end));
+            }
+            i += 1;
+        }
+
+        self.items[self.len] = item;
+        self.len += 1;
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ParseState<'a, const CAP: usize = 0> {
     /// Always a valid UTF-8 string.
@@ -120,6 +177,7 @@ pub(crate) struct ParseState<'a, const CAP: usize = 0> {
     /// Points to the next char to be parsed in `regex_bytes`.
     pos: usize,
     groups: Stack<GroupFrame, GROUP_DEPTH>,
+    group_names: GroupNames<MAX_NAMED_GROUPS>,
     is_empty_last_item: bool,
     ignore_whitespace: bool,
     spans: Option<Syntax<CAP>>,
@@ -137,6 +195,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             regex_bytes: regex.as_bytes(),
             pos: 0,
             groups: Stack::new(GroupFrame::DUMMY),
+            group_names: GroupNames::new(),
             is_empty_last_item: true,
             ignore_whitespace: options.ignore_whitespace,
             spans: if with_ast {
@@ -780,8 +839,9 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                     *name = Some(name_ast);
                 }
             }
+
+            const_try!(self.group_names.insert(name_ast.name, self.regex_bytes));
         }
-        // FIXME: check that the name is unique
 
         let mut spanned_flags = None;
         let mut is_standalone_flags = false;

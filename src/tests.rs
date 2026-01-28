@@ -1,6 +1,8 @@
 use core::ops;
 use std::collections::HashMap;
 
+use assert_matches::assert_matches;
+
 use super::*;
 
 impl From<ops::Range<usize>> for Range {
@@ -248,4 +250,22 @@ fn ast_with_dynamic_whitespace_control() {
             span(56..70, Ast::Comment),
         ]
     );
+}
+
+#[test]
+fn duplicate_capture_name() {
+    let regex = r"(?<test>.)(?<test>.)";
+    let err = try_validate(regex).unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::DuplicateCaptureName { prev_pos } if *prev_pos == (3..7));
+    assert_eq!(err.pos(), 13..17);
+
+    let regex = r"(?<test>.(?<test>.))";
+    let err = try_validate(regex).unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::DuplicateCaptureName { prev_pos } if *prev_pos == (3..7));
+    assert_eq!(err.pos(), 12..16);
+
+    let regex = r"(?<t>.(?<test>.)(?P<t>\d))";
+    let err = try_validate(regex).unwrap_err();
+    assert_matches!(err.kind(), ErrorKind::DuplicateCaptureName { prev_pos } if *prev_pos == (3..4));
+    assert_eq!(err.pos(), 20..21);
 }
