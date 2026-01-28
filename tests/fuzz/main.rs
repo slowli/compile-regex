@@ -15,11 +15,13 @@ use rand::{rngs::StdRng, seq::IteratorRandom, Rng, SeedableRng};
 use regex_syntax::ast::{
     self,
     parse::{Parser, ParserBuilder},
-    Ast, ClassSetItem,
+    Ast,
 };
 
 const ASCII_CHARS: ops::RangeInclusive<char> = ' '..='\x7f';
 const ASCII_WHITESPACE: [char; 4] = [' ', '\t', '\n', '#'];
+
+mod ast_match;
 
 struct UnsupportedChecker;
 
@@ -38,9 +40,9 @@ impl ast::Visitor for UnsupportedChecker {
         }
     }
 
-    fn visit_class_set_item_pre(&mut self, ast: &ClassSetItem) -> Result<(), Self::Err> {
+    fn visit_class_set_item_pre(&mut self, ast: &ast::ClassSetItem) -> Result<(), Self::Err> {
         match ast {
-            ClassSetItem::Unicode(_) => Err(()),
+            ast::ClassSetItem::Unicode(_) => Err(()),
             _ => Ok(()),
         }
     }
