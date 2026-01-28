@@ -652,8 +652,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 Ok(PrimitiveKind::Other)
             }
             b'b' => {
-                if matches!(self.ascii_char(), Some(b'{')) {
-                    const_try!(self.try_parse_word_boundary(start_pos));
+                if !matches!(self.ascii_char(), Some(b'{'))
+                    || !const_try!(self.try_parse_word_boundary(start_pos))
+                {
+                    const_try!(self.push_ast(start_pos, Ast::StdAssertion));
                 }
                 Ok(PrimitiveKind::Other)
             }
@@ -669,7 +671,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         }
     }
 
-    const fn try_parse_word_boundary(&mut self, escape_start: usize) -> Result<(), Error> {
+    const fn try_parse_word_boundary(&mut self, escape_start: usize) -> Result<bool, Error> {
         const fn is_valid_char(ch: u8) -> bool {
             matches!(ch, b'A'..=b'Z' | b'a'..=b'z' | b'-')
         }
@@ -688,7 +690,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         if !is_valid_char(self.regex_bytes[self.pos]) {
             self.restore(backup);
-            return Ok(()); // not a word boundary specifier
+            return Ok(false); // not a word boundary specifier
         }
 
         while !self.is_eof() && is_valid_char(self.regex_bytes[self.pos]) {
@@ -717,7 +719,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
 
         self.pos += 1; // gobble '}'
         const_try!(self.push_ast(escape_start, Ast::StdAssertion));
-        Ok(())
+        Ok(true)
     }
 
     /// Parses a hex-escaped char. The parser position is after the marker ('x', 'u' or 'U').

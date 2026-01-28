@@ -325,3 +325,18 @@ fn parsing_regex_with_many_comments() {
     }
     assert_eq!(comment_count, 2, "{dynamic_ast:#?}");
 }
+
+#[test]
+fn parsing_boundaries() {
+    const AST: Syntax = parse(r"\b|.|");
+
+    assert_eq!(
+        AST.as_slice(),
+        [
+            span(0..2, Ast::StdAssertion),
+            span(2..3, Ast::Alteration),
+            span(3..4, Ast::Dot),
+            span(4..5, Ast::Alteration),
+        ]
+    );
+}
