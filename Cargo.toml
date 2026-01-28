@@ -1,19 +1,19 @@
-[package]
-name = "compile-regex"
+[workspace]
+members = ["crates/compile-regex"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
+authors = ["Alex Ostrovski <ostrovski.alex@gmail.com>"]
 edition = "2021"
 rust-version = "1.80"
-authors = ["Alex Ostrovski <ostrovski.alex@gmail.com>"]
 license = "MIT OR Apache-2.0"
-readme = "README.md"
-description = "Compile-time regular expression validation"
 repository = "https://github.com/slowli/compile-regex"
 
-[dependencies]
-compile-fmt = "0.1.0"
-
-[dev-dependencies]
+[workspace.dependencies]
+# External dependencies
 arbitrary = "1.4.2"
 assert_matches = "1.5.0"
+compile-fmt = "0.1.0"
 rand = "0.9"
-regex-syntax = { version = "0.8.8", features = ["arbitrary"] }
+regex-syntax = "0.8.8"

@@ -1,0 +1,19 @@
+[package]
+name = "compile-regex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Compile-time regular expression validation"
+
+[dependencies]
+compile-fmt.workspace = true
+
+[dev-dependencies]
+arbitrary.workspace = true
+assert_matches.workspace = true
+rand.workspace = true
+regex-syntax = { workspace = true, features = ["arbitrary"] }
