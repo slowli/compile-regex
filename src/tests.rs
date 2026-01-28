@@ -18,10 +18,10 @@ fn span(range: ops::Range<usize>, node: Ast) -> SyntaxSpan {
 
 #[test]
 fn parsing_ast() {
-    const AST: SyntaxSpans = parse(r"^wh\x40t(?<group>\t|\.\>){3, 5}?\d+$");
+    const AST: Syntax = parse(r"^wh\x40t(?<group>\t|\.\>){3, 5}?\d+$");
 
     assert_eq!(
-        AST.spans(),
+        AST.as_slice(),
         &[
             span(0..1, Ast::LineAssertion),
             span(3..7, Ast::HexEscape),
@@ -63,7 +63,7 @@ fn parsing_ast_with_whitespace() {
         \t | \ \.\> # named group
       ) { 3, 5 }? # non-greedy repetition
       \d+ $";
-    const AST: SyntaxSpans = RegexOptions::DEFAULT.ignore_whitespace(true).parse(REGEX);
+    const AST: Syntax = RegexOptions::DEFAULT.ignore_whitespace(true).parse(REGEX);
 
     let expected_spans = [
         (r"\x40", Ast::HexEscape),
@@ -78,7 +78,7 @@ fn parsing_ast_with_whitespace() {
         ("+", Ast::UncountedRepetition),
     ];
     let actual_spans: HashMap<_, _> = AST
-        .spans()
+        .as_slice()
         .iter()
         .map(|span| (&REGEX[ops::Range::from(span.range)], span.node))
         .collect();
@@ -90,9 +90,9 @@ fn parsing_ast_with_whitespace() {
 
 #[test]
 fn parsing_set_ast() {
-    let ast: SyntaxSpans = parse(r"[[^ab]~~\t]");
+    let ast: Syntax = parse(r"[[^ab]~~\t]");
     assert_eq!(
-        ast.spans(),
+        ast.as_slice(),
         [
             span(0..1, Ast::SetStart { negation: None }),
             span(
@@ -108,9 +108,9 @@ fn parsing_set_ast() {
         ]
     );
 
-    let ast: SyntaxSpans = parse(r"[[:digit:]&&[:^cntrl:]-]");
+    let ast: Syntax = parse(r"[[:digit:]&&[:^cntrl:]-]");
     assert_eq!(
-        ast.spans(),
+        ast.as_slice(),
         [
             span(0..1, Ast::SetStart { negation: None }),
             span(1..10, Ast::AsciiClass),
@@ -120,9 +120,9 @@ fn parsing_set_ast() {
         ]
     );
 
-    let ast: SyntaxSpans = parse(r"[0-9--4-]");
+    let ast: Syntax = parse(r"[0-9--4-]");
     assert_eq!(
-        ast.spans(),
+        ast.as_slice(),
         [
             span(0..1, Ast::SetStart { negation: None }),
             span(2..3, Ast::SetRange),
@@ -134,7 +134,7 @@ fn parsing_set_ast() {
 
 #[test]
 fn parsing_set_ast_with_whitespace() {
-    const AST: SyntaxSpans = RegexOptions::DEFAULT.ignore_whitespace(true).parse(
+    const AST: Syntax = RegexOptions::DEFAULT.ignore_whitespace(true).parse(
         r"[ ^ # negated!
           0 - 9 # another comment
           -- 4-
@@ -142,7 +142,7 @@ fn parsing_set_ast_with_whitespace() {
     );
 
     assert_eq!(
-        AST.spans(),
+        AST.as_slice(),
         [
             span(
                 0..1,
@@ -161,10 +161,10 @@ fn parsing_set_ast_with_whitespace() {
 
 #[test]
 fn creating_ast_with_flags() {
-    const AST: SyntaxSpans = parse(r"(?us)^(?-x:\d{5})");
+    const AST: Syntax = parse(r"(?us)^(?-x:\d{5})");
 
     assert_eq!(
-        AST.spans(),
+        AST.as_slice(),
         [
             span(
                 0..1,

@@ -40,9 +40,9 @@ fn gobbling_whitespace() {
     state.gobble_whitespace_and_comments().unwrap();
     assert!(state.is_eof(), "{state:#?}");
     let spans = state.into_spans();
-    assert_eq!(spans.spans().len(), 2);
+    assert_eq!(spans.as_slice().len(), 2);
     assert!(spans
-        .spans()
+        .as_slice()
         .iter()
         .all(|span| matches!(span.node, Ast::Comment)));
 }
@@ -419,7 +419,7 @@ fn parsing_set_with_whitespace() {
             .ignore_whitespace(true)
             .try_parse::<16>(set)
             .unwrap();
-        let ast = ast.spans();
+        let ast = ast.as_slice();
         assert_matches!(ast[0].node, Ast::SetStart { .. });
         assert_eq!(ast[0].range.start, 0);
 

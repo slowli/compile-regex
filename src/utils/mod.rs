@@ -1,5 +1,9 @@
 //! General-purpose utils.
 
+pub use self::stack::Stack;
+
+mod stack;
+
 /// Version of `try!` / `?` that can be used in const fns.
 macro_rules! const_try {
     ($res:expr) => {

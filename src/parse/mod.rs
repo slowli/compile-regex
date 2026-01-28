@@ -7,7 +7,7 @@ use core::ops;
 use crate::{
     is_escapable_char, is_meta_char,
     utils::{ceil_char_boundary, is_char_boundary, split_first_char},
-    Ast, Error, ErrorKind, GroupName, Range, SyntaxSpan, SyntaxSpans,
+    Ast, Error, ErrorKind, GroupName, Range, Syntax, SyntaxSpan,
 };
 
 #[cfg(test)]
@@ -51,7 +51,7 @@ impl RegexOptions {
         }
     }
 
-    pub const fn try_parse<const CAP: usize>(self, regex: &str) -> Result<SyntaxSpans<CAP>, Error> {
+    pub const fn try_parse<const CAP: usize>(self, regex: &str) -> Result<Syntax<CAP>, Error> {
         let mut state = ParseState::custom(regex, self, true);
         loop {
             match state.step() {
@@ -63,7 +63,7 @@ impl RegexOptions {
     }
 
     #[track_caller]
-    pub const fn parse<const CAP: usize>(self, regex: &str) -> SyntaxSpans<CAP> {
+    pub const fn parse<const CAP: usize>(self, regex: &str) -> Syntax<CAP> {
         match self.try_parse(regex) {
             Ok(spans) => spans,
             Err(err) => err.compile_panic(regex),
@@ -90,7 +90,7 @@ struct Flags {
     ignore_whitespace: Option<bool>,
 }
 
-/// Parse state backup.
+/// Parser state backup.
 #[derive(Debug)]
 struct Backup {
     pos: usize,
@@ -106,7 +106,7 @@ pub(crate) struct ParseState<'a, const CAP: usize = 0> {
     group_depth: usize,
     is_empty_last_item: bool,
     ignore_whitespace: bool,
-    spans: Option<SyntaxSpans<CAP>>,
+    spans: Option<Syntax<CAP>>,
 }
 
 impl<'a> ParseState<'a> {
@@ -124,7 +124,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             is_empty_last_item: true,
             ignore_whitespace: options.ignore_whitespace,
             spans: if with_ast {
-                Some(SyntaxSpans::new())
+                Some(Syntax::new(SyntaxSpan::DUMMY))
             } else {
                 None
             },
@@ -1141,10 +1141,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         Ok(ops::ControlFlow::Continue(()))
     }
 
-    pub(crate) const fn into_spans(self) -> SyntaxSpans<CAP> {
+    pub(crate) const fn into_spans(self) -> Syntax<CAP> {
         match self.spans {
             Some(spans) => spans,
-            None => SyntaxSpans::new(),
+            None => Syntax::new(SyntaxSpan::DUMMY),
         }
     }
 }

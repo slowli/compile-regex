@@ -2,6 +2,8 @@
 
 use core::{fmt, ops};
 
+use crate::utils::Stack;
+
 /// Range of chars. Similar to `Range<usize>`, but implements `Copy`.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Range {
@@ -92,7 +94,7 @@ pub struct GroupName {
     pub end: Range,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct SyntaxSpan {
     pub node: Ast,
@@ -100,59 +102,11 @@ pub struct SyntaxSpan {
 }
 
 impl SyntaxSpan {
-    const DUMMY: Self = Self {
+    pub(crate) const DUMMY: Self = Self {
         node: Ast::Dot,
         range: Range { start: 0, end: 0 },
     };
 }
 
-#[derive(Debug)]
-pub(crate) struct PushError;
-
-pub struct SyntaxSpans<const N: usize = 128> {
-    inner: [SyntaxSpan; N],
-    len: usize,
-}
-
-impl<const N: usize> fmt::Debug for SyntaxSpans<N> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self.spans(), formatter)
-    }
-}
-
-impl<const N: usize> SyntaxSpans<N> {
-    pub(crate) const fn new() -> Self {
-        Self {
-            inner: [SyntaxSpan::DUMMY; N],
-            len: 0,
-        }
-    }
-
-    pub const fn spans(&self) -> &[SyntaxSpan] {
-        let (start, _) = self.inner.split_at(self.len);
-        start
-    }
-
-    pub(crate) const fn len(&self) -> usize {
-        self.len
-    }
-
-    pub(crate) const fn trim(&mut self, new_len: usize) {
-        self.len = new_len;
-    }
-
-    pub(crate) const fn index_mut(&mut self, idx: usize) -> &mut SyntaxSpan {
-        assert!(idx < self.len, "index out of range");
-        &mut self.inner[idx]
-    }
-
-    pub(crate) const fn push(&mut self, span: SyntaxSpan) -> Result<(), PushError> {
-        if self.len == N {
-            Err(PushError)
-        } else {
-            self.inner[self.len] = span;
-            self.len += 1;
-            Ok(())
-        }
-    }
-}
+/// Linearized syntax tree.
+pub type Syntax<const LEN: usize = 128> = Stack<SyntaxSpan, LEN>;

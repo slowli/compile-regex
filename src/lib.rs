@@ -1,5 +1,5 @@
 pub use crate::{
-    ast::{Ast, GroupName, Range, SyntaxSpan, SyntaxSpans},
+    ast::{Ast, GroupName, Range, Syntax, SyntaxSpan},
     errors::{Error, ErrorKind},
     parse::RegexOptions,
 };
@@ -52,12 +52,12 @@ pub const fn validate(regex: &str) {
     }
 }
 
-pub const fn try_parse<const CAP: usize>(regex: &str) -> Result<SyntaxSpans<CAP>, Error> {
+pub const fn try_parse<const CAP: usize>(regex: &str) -> Result<Syntax<CAP>, Error> {
     RegexOptions::DEFAULT.try_parse(regex)
 }
 
 #[track_caller]
-pub const fn parse<const CAP: usize>(regex: &str) -> SyntaxSpans<CAP> {
+pub const fn parse<const CAP: usize>(regex: &str) -> Syntax<CAP> {
     match try_parse(regex) {
         Ok(spans) => spans,
         Err(err) => err.compile_panic(regex),
