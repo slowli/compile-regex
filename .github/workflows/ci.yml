@@ -14,10 +14,12 @@ env:
 
 jobs:
   build-msrv:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -25,7 +27,7 @@ jobs:
           toolchain: ${{ env.msrv }}
 
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: target
           key: ${{ runner.os }}-msrv-cargo-${{ hashFiles('Cargo.lock') }}
@@ -39,10 +41,12 @@ jobs:
         run: cargo build -p compile-regex --lib --no-default-features --features=alloc
 
   build:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -50,13 +54,13 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - name: Install cargo-deny
-        uses: baptiste0928/cargo-install@v2
+        uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-deny
           version: "^0.18.5"
 
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
@@ -80,7 +84,7 @@ jobs:
       - name: Run doc tests
         run: cargo test --workspace --all-features --doc
       - name: Fuzz
-        run: cargo test -p compile-regex --test fuzz
+        run: cargo test --release -p compile-regex --test fuzz
         env:
           PROPTEST_CASES: 1000000
 
@@ -94,7 +98,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -102,7 +106,7 @@ jobs:
           toolchain: ${{ env.nightly }}
 
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: target
           key: ${{ runner.os }}-cargo-build-nightly-${{ hashFiles('Cargo.lock') }}
