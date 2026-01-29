@@ -1,5 +1,12 @@
 # Compile-Time Regular Expression Parsing
 
+[![CI](https://github.com/slowli/compile-regex/actions/workflows/ci.yml/badge.svg)](https://github.com/slowli/compile-regex/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%2FApache--2.0-blue)](https://github.com/slowli/test-casing#license)
+![rust 1.85+ required](https://img.shields.io/badge/rust-1.85+-blue.svg?label=Required%20Rust)
+
+**Documentation:**
+[![crate docs (main)](https://img.shields.io/badge/main-yellow.svg?label=docs)](https://slowli.github.io/compile-regex/compile_regex)
+
 This library provides compile-time validation and parsing for regular expressions.
 It has only a lightweight [`compile-fmt`] dependency (to produce better panic messages)
 and is no-std / no-alloc compatible. Unlike some alternatives, it does not wrap a proc macro.

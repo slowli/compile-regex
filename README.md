@@ -1,5 +1,8 @@
 # Compile-Time Regular Expression Parsing
 
+[![CI](https://github.com/slowli/compile-regex/actions/workflows/ci.yml/badge.svg)](https://github.com/slowli/compile-regex/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%2FApache--2.0-blue)](https://github.com/slowli/test-casing#license)
+
 This library implements compile-time validation and parsing of regular expressions in Rust
 (specifically, syntax supported by the [`regex`] library).
 
