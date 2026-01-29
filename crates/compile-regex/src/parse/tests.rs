@@ -390,7 +390,7 @@ fn controlling_whitespace_in_groups_via_group_flags() {
     assert!(state.ignore_whitespace);
     assert_eq!(state.groups.len(), 1);
 
-    while state.groups.len() > 0 {
+    while !state.groups.is_empty() {
         assert!(state.step().unwrap().is_continue());
     }
     assert_eq!(state.pos, 9);

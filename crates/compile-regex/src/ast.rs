@@ -25,6 +25,14 @@ impl From<Span> for ops::Range<usize> {
     }
 }
 
+impl ops::Index<Span> for str {
+    type Output = str;
+
+    fn index(&self, index: Span) -> &Self::Output {
+        &self[ops::Range::from(index)]
+    }
+}
+
 impl Span {
     #[doc(hidden)] // used in fuzz tests; logically private
     pub const fn new(start: usize, end: usize) -> Self {

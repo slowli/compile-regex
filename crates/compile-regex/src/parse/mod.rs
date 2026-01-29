@@ -1274,7 +1274,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         const_try!(self.gobble_whitespace_and_comments());
 
         let Some((current_ch, next_pos)) = split_first_char(self.regex_bytes, self.pos) else {
-            if self.groups.len() != 0 {
+            if !self.groups.is_empty() {
                 return Err(self.error(self.regex_bytes.len(), ErrorKind::UnfinishedGroup));
             }
             return Ok(ops::ControlFlow::Break(()));

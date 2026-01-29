@@ -1,6 +1,6 @@
 //! General-purpose utils.
 
-pub(crate) use self::stack::Stack;
+pub use self::stack::Stack;
 
 mod stack;
 
