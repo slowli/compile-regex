@@ -15,8 +15,10 @@ repository = "https://github.com/slowli/compile-regex"
 arbitrary = "1.4.2"
 assert_matches = "1.5.0"
 compile-fmt = "0.1.0"
+doc-comment = "0.3.4"
 rand = "0.9"
 regex-syntax = "0.8.8"
+version-sync = "0.9.5"
 
 [workspace.lints.rust]
 missing_docs = "warn"

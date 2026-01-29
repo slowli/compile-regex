@@ -97,6 +97,10 @@
 //! [`regex`]: https://docs.rs/regex/
 //! [`regex-syntax`]: https://docs.rs/regex-syntax/
 
+// Documentation settings
+#![doc(html_root_url = "https://docs.rs/compile-regex/0.1.0")]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub use crate::{
     errors::{Error, ErrorKind},
     parse::RegexOptions,
@@ -157,3 +161,6 @@ pub const fn parse<const CAP: usize>(regex: &str) -> ast::Syntax<CAP> {
         Err(err) => err.compile_panic(regex),
     }
 }
+
+#[cfg(doctest)]
+doc_comment::doctest!("../README.md");

@@ -15,8 +15,10 @@ compile-fmt.workspace = true
 [dev-dependencies]
 arbitrary.workspace = true
 assert_matches.workspace = true
+doc-comment.workspace = true
 rand.workspace = true
 regex-syntax = { workspace = true, features = ["arbitrary"] }
+version-sync.workspace = true
 
 [lints]
 workspace = true
