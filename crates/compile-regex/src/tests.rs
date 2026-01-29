@@ -21,10 +21,10 @@ fn span(range: ops::Range<usize>, node: Node) -> Spanned {
 #[test]
 fn parsing_ast() {
     const REGEX: &str = r"^wh\x40t(?<group>\t|\.\>){3, 5}?\d+$";
-    const AST: Syntax = parse(REGEX);
+    const AST: &[Spanned] = parse!(REGEX);
 
     assert_eq!(
-        AST.as_slice(),
+        AST,
         &[
             span(0..1, Node::LineAssertion),
             span(3..7, Node::HexEscape),
@@ -58,7 +58,7 @@ fn parsing_ast() {
     );
 
     let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
-    assert_eq!(dynamic_ast, AST.as_slice());
+    assert_eq!(dynamic_ast, AST);
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn parsing_ast_with_whitespace() {
 #[test]
 fn parsing_set_ast() {
     let regex = r"[[^ab]~~\t]";
-    let ast: Syntax = parse(regex);
+    let ast: Syntax = RegexOptions::DEFAULT.parse(regex);
     assert_eq!(
         ast.as_slice(),
         [
@@ -124,7 +124,7 @@ fn parsing_set_ast() {
     assert_eq!(dynamic_ast, ast.as_slice());
 
     let regex = r"[[:digit:]&&[:^cntrl:]-]";
-    let ast: Syntax = parse(regex);
+    let ast: Syntax = RegexOptions::DEFAULT.parse(regex);
     assert_eq!(
         ast.as_slice(),
         [
@@ -139,7 +139,7 @@ fn parsing_set_ast() {
     assert_eq!(dynamic_ast, ast.as_slice());
 
     let regex = r"[0-9--4-]";
-    let ast: Syntax = parse(regex);
+    let ast: Syntax = RegexOptions::DEFAULT.parse(regex);
     assert_eq!(
         ast.as_slice(),
         [
@@ -188,10 +188,10 @@ fn parsing_set_ast_with_whitespace() {
 #[test]
 fn creating_ast_with_flags() {
     const REGEX: &str = r"(?us)^(?-x:\d{5})";
-    const AST: Syntax = parse(REGEX);
+    const AST: &[Spanned] = parse!(REGEX);
 
     assert_eq!(
-        AST.as_slice(),
+        AST,
         [
             span(
                 0..1,
@@ -219,7 +219,7 @@ fn creating_ast_with_flags() {
     );
 
     let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
-    assert_eq!(dynamic_ast, AST.as_slice());
+    assert_eq!(dynamic_ast, AST);
 }
 
 #[test]
@@ -227,10 +227,10 @@ fn ast_with_dynamic_whitespace_control() {
     const REGEX: &str = r"(?x)
         \d+ # digits
         (?<color>(?-x)#\d{6}) # literal hash";
-    const AST: Syntax = parse(REGEX);
+    const AST: &[Spanned] = parse!(REGEX);
 
     assert_eq!(
-        AST.as_slice(),
+        AST,
         [
             span(
                 0..1,
@@ -273,7 +273,7 @@ fn ast_with_dynamic_whitespace_control() {
     );
 
     let dynamic_ast = RegexOptions::DEFAULT.try_parse_to_vec(REGEX).unwrap();
-    assert_eq!(dynamic_ast, AST.as_slice());
+    assert_eq!(dynamic_ast, AST);
 }
 
 #[test]
@@ -328,10 +328,10 @@ fn parsing_regex_with_many_comments() {
 
 #[test]
 fn parsing_boundaries() {
-    const AST: Syntax = parse(r"\b|.|");
+    const AST: &[Spanned] = parse!(r"\b|.|");
 
     assert_eq!(
-        AST.as_slice(),
+        AST,
         [
             span(0..2, Node::StdAssertion),
             span(2..3, Node::Alteration),

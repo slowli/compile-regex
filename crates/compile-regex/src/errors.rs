@@ -137,7 +137,7 @@ pub enum ErrorKind {
     /// This is technically supported by `regex`, but makes literals harder to read.
     DisallowedComment,
 
-    /// Regex contains too many spans for the capacity specified in [`parse()`](crate::parse()) etc.
+    /// Regex contains too many spans for the capacity specified in [`RegexOptions::parse()`](crate::RegexOptions::parse()) etc.
     AstOverflow,
     /// Regex contains too deeply nested groups.
     GroupDepthOverflow,

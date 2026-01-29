@@ -16,6 +16,14 @@ use crate::{
 #[cfg(test)]
 mod tests;
 
+/// Result of [validating](RegexOptions::validate()) a regular expression.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ValidationOutput {
+    /// Number of syntax [`Node`]s in the expression.
+    pub node_count: usize,
+}
+
 /// Regular expression parsing options.
 ///
 /// # Examples
@@ -64,7 +72,7 @@ impl RegexOptions {
     /// # Errors
     ///
     /// Returns an error if the provided `regex` is not a valid regular expression.
-    pub const fn try_validate(&self, regex: &str) -> Result<(), Error> {
+    pub const fn try_validate(&self, regex: &str) -> Result<ValidationOutput, Error> {
         let mut state = <ParseState>::new(regex, self);
         loop {
             match state.step() {
@@ -74,7 +82,9 @@ impl RegexOptions {
             }
         }
 
-        Ok(())
+        Ok(ValidationOutput {
+            node_count: state.syntax.len(),
+        })
     }
 
     /// Validates the provided regular expression, panicking on errors. This is a shortcut for
@@ -84,13 +94,18 @@ impl RegexOptions {
     ///
     /// Panics if the provided `regex` is not a valid regular expression.
     #[track_caller]
-    pub const fn validate(&self, regex: &str) {
-        if let Err(err) = self.try_validate(regex) {
-            err.compile_panic(regex);
+    pub const fn validate(&self, regex: &str) -> ValidationOutput {
+        match self.try_validate(regex) {
+            Err(err) => err.compile_panic(regex),
+            Ok(output) => output,
         }
     }
 
     /// Tries to parse the provided regular expression.
+    ///
+    /// The `CAP` constant specifies the capacity of the produced [`Syntax`]. If it is exceeded,
+    /// the method will return [`AstOverflow`](ErrorKind::AstOverflow). Use the [`parse!`](crate::parse!) macro
+    /// to determine the capacity automatically.
     ///
     /// # Errors
     ///
@@ -102,7 +117,7 @@ impl RegexOptions {
         loop {
             match state.step() {
                 Err(err) => return Err(err),
-                Ok(ops::ControlFlow::Break(())) => return Ok(state.into_spans()),
+                Ok(ops::ControlFlow::Break(())) => return Ok(state.into_syntax()),
                 Ok(ops::ControlFlow::Continue(())) => { /* continue */ }
             }
         }
@@ -145,10 +160,13 @@ impl RegexOptions {
             let step_result = state.step()?;
             // Empty all captured spans to `syntax`. Since we never read from spans in the parser,
             // this doesn't influence subsequent steps.
-            #[allow(clippy::missing_panics_doc)] // `spans` are always set by design
-            let spans = state.spans.as_mut().unwrap();
-            let spans = mem::replace(spans, Syntax::new(Spanned::DUMMY));
-            syntax.extend_from_slice(spans.as_slice());
+            #[allow(clippy::missing_panics_doc)] // `syntax` is always set by design
+            let SyntaxOrLen::Syntax(new_syntax) = &mut state.syntax
+            else {
+                panic!("cannot happen");
+            };
+            let new_syntax = mem::replace(new_syntax, Syntax::new(Spanned::DUMMY));
+            syntax.extend_from_slice(new_syntax.as_slice());
 
             if step_result.is_break() {
                 return Ok(syntax);
@@ -257,6 +275,37 @@ impl<const CAP: usize> GroupNames<CAP> {
 }
 
 #[derive(Debug)]
+enum SyntaxOrLen<const CAP: usize> {
+    Syntax(Syntax<CAP>),
+    Len(usize),
+}
+
+impl<const CAP: usize> SyntaxOrLen<CAP> {
+    const fn new(with_syntax: bool) -> Self {
+        if with_syntax {
+            Self::Syntax(Syntax::new(Spanned::DUMMY))
+        } else {
+            Self::Len(0)
+        }
+    }
+
+    const fn len(&self) -> usize {
+        match self {
+            Self::Syntax(syntax) => syntax.len(),
+            Self::Len(len) => *len,
+        }
+    }
+
+    const fn trim(&mut self, new_len: usize) {
+        debug_assert!(self.len() >= new_len);
+        match self {
+            Self::Syntax(syntax) => syntax.trim(new_len),
+            Self::Len(len) => *len = new_len,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct ParseState<'a, const CAP: usize = 0> {
     /// Always a valid UTF-8 string.
     regex_bytes: &'a [u8],
@@ -267,7 +316,7 @@ pub(crate) struct ParseState<'a, const CAP: usize = 0> {
     set_depth: usize,
     is_empty_last_item: bool,
     ignore_whitespace: bool,
-    spans: Option<Syntax<CAP>>,
+    syntax: SyntaxOrLen<CAP>,
 }
 
 impl<'a> ParseState<'a> {
@@ -277,7 +326,7 @@ impl<'a> ParseState<'a> {
 }
 
 impl<'a, const CAP: usize> ParseState<'a, CAP> {
-    pub(crate) const fn custom(regex: &'a str, options: &RegexOptions, with_ast: bool) -> Self {
+    pub(crate) const fn custom(regex: &'a str, options: &RegexOptions, with_syntax: bool) -> Self {
         Self {
             regex_bytes: regex.as_bytes(),
             pos: 0,
@@ -286,21 +335,14 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             set_depth: 0,
             is_empty_last_item: true,
             ignore_whitespace: options.ignore_whitespace,
-            spans: if with_ast {
-                Some(Syntax::new(Spanned::DUMMY))
-            } else {
-                None
-            },
+            syntax: SyntaxOrLen::new(with_syntax),
         }
     }
 
     const fn backup(&self) -> Backup {
         Backup {
             pos: self.pos,
-            span_count: match &self.spans {
-                Some(spans) => spans.len(),
-                None => 0,
-            },
+            span_count: self.syntax.len(),
         }
     }
 
@@ -308,10 +350,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         debug_assert!(self.pos >= backup.pos);
 
         self.pos = backup.pos;
-        if let Some(spans) = &mut self.spans {
-            debug_assert!(spans.len() >= backup.span_count);
-            spans.trim(backup.span_count);
-        }
+        self.syntax.trim(backup.span_count);
     }
 
     const fn ascii_char_at(&self, pos: usize) -> Option<u8> {
@@ -346,24 +385,19 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         kind.with_position(start..end)
     }
 
-    const fn ast_len(&self) -> usize {
-        if let Some(spans) = &self.spans {
-            spans.len()
-        } else {
-            0
-        }
-    }
-
     const fn push_ast(&mut self, start_pos: usize, node: Node) -> Result<(), Error> {
         self.push_custom_ast(Span::new(start_pos, self.pos), node)
     }
 
     const fn push_custom_ast(&mut self, range: Span, node: Node) -> Result<(), Error> {
-        if let Some(spans) = &mut self.spans {
-            let span = Spanned { node, span: range };
-            if spans.push(span).is_err() {
-                return Err(self.error(range.start, ErrorKind::AstOverflow));
+        match &mut self.syntax {
+            SyntaxOrLen::Syntax(syntax) => {
+                let span = Spanned { node, span: range };
+                if syntax.push(span).is_err() {
+                    return Err(self.error(range.start, ErrorKind::AstOverflow));
+                }
             }
+            SyntaxOrLen::Len(len) => *len += 1,
         }
         Ok(())
     }
@@ -906,7 +940,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         debug_assert!(self.regex_bytes[self.pos] == b'(');
         self.pos += 1;
 
-        let start_ast_idx = self.ast_len();
+        let start_ast_idx = self.syntax.len();
         const_try!(self.push_ast(
             start_pos,
             Node::GroupStart {
@@ -930,8 +964,8 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         if is_named {
             let start = Span::new(name_start, self.pos);
             let name_ast = const_try!(self.parse_capture_name(start));
-            if let Some(spans) = &mut self.spans {
-                if let Node::GroupStart { name, .. } = &mut spans.index_mut(start_ast_idx).node {
+            if let SyntaxOrLen::Syntax(syntax) = &mut self.syntax {
+                if let Node::GroupStart { name, .. } = &mut syntax.index_mut(start_ast_idx).node {
                     *name = Some(name_ast);
                 }
             }
@@ -966,9 +1000,9 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             }
         }
 
-        if let Some(spans) = &mut self.spans {
+        if let SyntaxOrLen::Syntax(syntax) = &mut self.syntax {
             if let (Node::GroupStart { flags, .. }, Some((_, span))) =
-                (&mut spans.index_mut(start_ast_idx).node, &spanned_flags)
+                (&mut syntax.index_mut(start_ast_idx).node, &spanned_flags)
             {
                 *flags = Some(*span);
             }
@@ -1133,7 +1167,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         debug_assert!(self.regex_bytes[self.pos] == b'[');
         self.pos += 1;
 
-        let ast_idx = self.ast_len();
+        let ast_idx = self.syntax.len();
         const_try!(self.push_ast(start_pos, Node::SetStart { negation: None }));
 
         const_try!(self.gobble_whitespace_and_comments());
@@ -1149,8 +1183,8 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
                 return Err(self.error(start_pos, ErrorKind::UnfinishedSet));
             }
 
-            if let Some(spans) = &mut self.spans {
-                if let Node::SetStart { negation } = &mut spans.index_mut(ast_idx).node {
+            if let SyntaxOrLen::Syntax(syntax) = &mut self.syntax {
+                if let Node::SetStart { negation } = &mut syntax.index_mut(ast_idx).node {
                     *negation = Some(negation_range);
                 }
             }
@@ -1345,10 +1379,10 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
         Ok(ops::ControlFlow::Continue(()))
     }
 
-    pub(crate) const fn into_spans(self) -> Syntax<CAP> {
-        match self.spans {
-            Some(spans) => spans,
-            None => Syntax::new(Spanned::DUMMY),
+    pub(crate) const fn into_syntax(self) -> Syntax<CAP> {
+        match self.syntax {
+            SyntaxOrLen::Syntax(syntax) => syntax,
+            SyntaxOrLen::Len(_) => Syntax::new(Spanned::DUMMY),
         }
     }
 }

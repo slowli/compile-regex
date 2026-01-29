@@ -1,5 +1,12 @@
 # Compile-Time Regular Expression Parsing
 
+[![CI](https://github.com/slowli/compile-regex/actions/workflows/ci.yml/badge.svg)](https://github.com/slowli/compile-regex/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%2FApache--2.0-blue)](https://github.com/slowli/compile-regex#license)
+![rust 1.85+ required](https://img.shields.io/badge/rust-1.85+-blue.svg?label=Required%20Rust)
+
+**Documentation:**
+[![crate docs (main)](https://img.shields.io/badge/main-yellow.svg?label=docs)](https://slowli.github.io/compile-regex/compile_regex)
+
 This library provides compile-time validation and parsing for regular expressions.
 It has only a lightweight [`compile-fmt`] dependency (to produce better panic messages)
 and is no-std / no-alloc compatible. Unlike some alternatives, it does not wrap a proc macro.
@@ -34,7 +41,7 @@ compile-regex = "0.1.0"
 Example of usage:
 
 ```rust
-use compile_regex::{ast::{Node, Syntax}, parse, validate};
+use compile_regex::{ast, parse, validate};
 
 // Validate a simple regex for phone numbers.
 const _: () = validate(r"(?<code>\+1\s*)?\(\d{3}\)\d{3}-\d{4}");
@@ -44,7 +51,7 @@ const PHONE_REGEX: &str = r"(?x)
     (?<city> \( \d{3} \)) # City code
     \s*
     (?<num> \d{3}-\d{4})";
-const SYNTAX: Syntax = parse(PHONE_REGEX);
+const SYNTAX: &[ast::Spanned] = parse!(PHONE_REGEX);
 
 println!("{SYNTAX:#?}");
 ```
@@ -72,7 +79,7 @@ Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE)
 or [MIT license](LICENSE-MIT) at your option.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in `term-transcript` by you, as defined in the Apache-2.0 license,
+for inclusion in `compile-regex` by you, as defined in the Apache-2.0 license,
 shall be dual licensed as above, without any additional terms or conditions.
 
 [`compile-fmt`]: https://crates.io/crates/compile-fmt/

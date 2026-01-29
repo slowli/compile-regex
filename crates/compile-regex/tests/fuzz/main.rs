@@ -98,6 +98,7 @@ fn test_regex(ast_str: &str, ws: bool, stats: &mut Stats) -> bool {
             RegexOptions::DEFAULT
                 .ignore_whitespace(true)
                 .try_validate(regex)
+                .map(drop)
         }
     } else {
         try_validate
@@ -119,11 +120,10 @@ fn test_regex(ast_str: &str, ws: bool, stats: &mut Stats) -> bool {
     };
 
     if is_unsupported(&ast) {
-        let err = match validate_fn(ast_str) {
-            Ok(()) => {
-                panic!("expected regex {ast_str:?} with unsupported features to fail, but it succeeded");
-            }
-            Err(err) => err,
+        let Err(err) = validate_fn(ast_str) else {
+            panic!(
+                "expected regex {ast_str:?} with unsupported features to fail, but it succeeded"
+            );
         };
         assert!(
             is_unsupported_error(err.kind()),
