@@ -39,7 +39,7 @@ fn gobbling_whitespace() {
 
     state.gobble_whitespace_and_comments().unwrap();
     assert!(state.is_eof(), "{state:#?}");
-    let spans = state.into_spans();
+    let spans = state.into_syntax();
     assert_eq!(spans.as_slice().len(), 1);
     assert!(spans
         .as_slice()

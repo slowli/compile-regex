@@ -55,7 +55,7 @@
 //! # Examples
 //!
 //! ```
-//! use compile_regex::{ast::{Node, Syntax}, parse, validate};
+//! use compile_regex::{ast, parse, validate};
 //!
 //! // Validate a regex for phone numbers.
 //! const _: () = validate(r"(?<code>\+1\s*)?\(\d{3}\)\d{3}-\d{4}");
@@ -65,13 +65,13 @@
 //!     (?<city> \( \d{3} \)) # City code
 //!     \s*
 //!     (?<num> \d{3}-\d{4})";
-//! const SYNTAX: Syntax = parse(PHONE_REGEX);
+//! const SYNTAX: &[ast::Spanned] = parse!(PHONE_REGEX);
 //!
 //! println!("{SYNTAX:#?}");
 //!
 //! // Get all named groups in the regex.
 //! let group_names = SYNTAX.iter().filter_map(|spanned| {
-//!     if let Node::GroupStart { name: Some(name), .. } = &spanned.node {
+//!     if let ast::Node::GroupStart { name: Some(name), .. } = &spanned.node {
 //!         return Some(&PHONE_REGEX[name.name]);
 //!     }
 //!     None
@@ -82,7 +82,7 @@
 //!
 //! ## Errors
 //!
-//! If [`validate()`] or [`parse()`] functions fail, they raise a compile-time error:
+//! If the [`validate()`] function or the [`parse!`] macro fail, they raise a compile-time error:
 //!
 //! ```compile_fail
 //! # use compile_regex::validate;
@@ -98,7 +98,7 @@
 //! # use assert_matches::assert_matches;
 //!
 //! const ERR: Error = match try_validate(r"(?<code>+1\s*)?") {
-//!     Ok(()) => panic!("validation succeeded"),
+//!     Ok(_) => panic!("validation succeeded"),
 //!     Err(err) => err,
 //! };
 //!
@@ -122,7 +122,7 @@
 
 pub use crate::{
     errors::{Error, ErrorKind},
-    parse::RegexOptions,
+    parse::{RegexOptions, ValidationOutput},
     utils::Stack,
 };
 
@@ -149,7 +149,10 @@ mod alloc {
 ///
 /// Returns an error if the provided `regex` is not a valid regular expression.
 pub const fn try_validate(regex: &str) -> Result<(), Error> {
-    RegexOptions::DEFAULT.try_validate(regex)
+    match RegexOptions::DEFAULT.try_validate(regex) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err),
+    }
 }
 
 /// Validates the provided regular expression, panicking on errors. This is a shortcut for
@@ -160,34 +163,57 @@ pub const fn try_validate(regex: &str) -> Result<(), Error> {
 /// Panics if the provided `regex` is not a valid regular expression.
 #[track_caller]
 pub const fn validate(regex: &str) {
-    if let Err(err) = try_validate(regex) {
-        err.compile_panic(regex);
-    }
+    RegexOptions::DEFAULT.validate(regex);
 }
 
-/// Tries to parse the provided regular expression with the default [options](RegexOptions).
+/// Produces [spanned syntax nodes](ast::Spanned) for the provided regex. The regex must be a constant expression
+/// (but not necessarily a string literal).
 ///
-/// # Errors
+/// This is a preferred way to define syntax nodes in compile time (as opposed to using [`RegexOptions::parse()`])
+/// because the latter can lead to unused [`Syntax`](ast::Syntax) capacity added to the data section
+/// of the built executable. This padding is inaccessible, but the Rust compiler isn't smart enough to realize this.
+/// This macro computes the exact necessary capacity to store syntax nodes.
 ///
-/// - Returns an error if the provided `regex` is not a valid regular expression.
-/// - Errors if one of internal limits is hit (e.g., the number of [syntax spans](ast::Spanned)
-///   or the number of named captures).
-pub const fn try_parse<const CAP: usize>(regex: &str) -> Result<ast::Syntax<CAP>, Error> {
-    RegexOptions::DEFAULT.try_parse(regex)
-}
-
-/// Parses the provided regular expression, panicking on errors. This is a shortcut for
-/// [`try_parse()`]`.unwrap()`.
+/// # Examples
 ///
-/// # Panics
+/// ```
+/// use compile_regex::{ast, parse};
+/// # use assert_matches::assert_matches;
 ///
-/// Panics in the same situations in which [`try_parse()`] returns an error.
-#[track_caller]
-pub const fn parse<const CAP: usize>(regex: &str) -> ast::Syntax<CAP> {
-    match try_parse(regex) {
-        Ok(spans) => spans,
-        Err(err) => err.compile_panic(regex),
-    }
+/// const SYNTAX: &[ast::Spanned] = parse!(r"^\s*\d{3,5}?");
+///
+/// assert_eq!(SYNTAX.len(), 5);
+/// assert_matches!(SYNTAX[0].node, ast::Node::LineAssertion); // ^
+/// assert_matches!(SYNTAX[4].node, ast::Node::CountedRepetition(_)); // {3,5}?
+/// ```
+///
+/// ## Use with `RegexOptions`
+///
+/// The macro optionally accepts parsing options.
+///
+/// ```
+/// use compile_regex::{ast, parse, RegexOptions};
+///
+/// const SYNTAX: &[ast::Spanned] = parse!(
+///     options: RegexOptions::DEFAULT.ignore_whitespace(true),
+///     r"(?<digits> # This is a comment :) so the closing brace should be ignored
+///         [0- 9]+ # without ignoring whitespace, this range would be invalid
+///     )"
+/// );
+///
+/// assert!(SYNTAX
+///     .iter()
+///     .any(|spanned| matches!(spanned.node, ast::Node::SetRange)));
+/// ```
+#[macro_export]
+macro_rules! parse {
+    ($regex:expr) => {
+        $crate::parse!(options: $crate::RegexOptions::DEFAULT, $regex)
+    };
+    (options: $options:expr, $regex:expr) => {{
+        const CAP: usize = $crate::RegexOptions::validate(&$options, $regex).node_count;
+        $crate::RegexOptions::parse::<CAP>(&$options, $regex).as_slice()
+    }};
 }
 
 #[cfg(doctest)]
