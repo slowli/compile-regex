@@ -37,6 +37,21 @@
 //! - [`ere`](https://docs.rs/ere/) parses and compiles regular expressions in compile time.
 //!   It supports POSIX extended regexes (i.e., a strict subset of what `regex` supports), and still uses proc macros.
 //!
+//! # Crate features
+//!
+//! ## `alloc`
+//!
+//! *(On by default)*
+//!
+//! Enables support of alloc types, such as [`Vec`] in [`RegexOptions::try_parse_to_vec()`].
+//!
+//! ## `std`
+//!
+//! *(On by default)*
+//!
+//! Enables support of the standard library types, e.g. the [`Error`](std::error::Error) trait implementation
+//! for [`Error`].
+//!
 //! # Examples
 //!
 //! ```
@@ -66,6 +81,8 @@
 //! ```
 //!
 //! ## Errors
+//!
+//! If [`validate()`] or [`parse()`] functions fail, they raise a compile-time error:
 //!
 //! ```compile_fail
 //! # use compile_regex::validate;
@@ -97,6 +114,8 @@
 //! [`regex`]: https://docs.rs/regex/
 //! [`regex-syntax`]: https://docs.rs/regex-syntax/
 
+// Conditional compilation
+#![cfg_attr(not(feature = "std"), no_std)]
 // Documentation settings
 #![doc(html_root_url = "https://docs.rs/compile-regex/0.1.0")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -114,6 +133,15 @@ mod errors;
 mod parse;
 #[cfg(test)]
 mod tests;
+
+/// `alloc` re-exports.
+#[cfg(feature = "alloc")]
+mod alloc {
+    #[cfg(not(feature = "std"))]
+    extern crate alloc as std;
+
+    pub(crate) use std::vec::Vec;
+}
 
 /// Tries to validate the provided regular expression with the default [options](RegexOptions).
 ///

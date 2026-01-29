@@ -1,8 +1,8 @@
-//! Parsing logic. Heavily inspired by AST parsing in the `regex-syntax` crate:
+//! Regex parsing logic. Heavily inspired by AST parsing in the `regex-syntax` crate:
 //!
 //! <https://github.com/rust-lang/regex/blob/master/regex-syntax/src/ast/parse.rs>
 
-use core::{fmt, mem, ops};
+use core::{fmt, ops};
 
 use crate::{
     ast::{CountedRepetition, GroupName, Node, Span, Spanned, Syntax},
@@ -127,7 +127,13 @@ impl RegexOptions {
     /// # Errors
     ///
     /// Returns an error if the provided `regex` is not a valid regular expression.
-    pub fn try_parse_to_vec(&self, regex: &str) -> Result<Vec<Spanned>, Error> {
+    #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+    #[cfg(feature = "alloc")]
+    pub fn try_parse_to_vec(&self, regex: &str) -> Result<crate::alloc::Vec<Spanned>, Error> {
+        use core::mem;
+
+        use crate::alloc::Vec;
+
         /// Max number of AST spans added during a single parsing step. This is roughly
         /// 2x the max number of "main" / non-comment spans that can be added on a single step
         /// (note that we glue line comments together).

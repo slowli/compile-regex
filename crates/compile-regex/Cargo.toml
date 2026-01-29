@@ -22,3 +22,10 @@ version-sync.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+default = ["std"]
+# Enables support of alloc types, such as `Vec`.
+alloc = []
+# Enables support of the standard library types, e.g. the `Error` trait implementation.
+std = ["alloc"]
