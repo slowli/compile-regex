@@ -90,9 +90,6 @@ jobs:
 
   # Also builds crate docs for deployment to GitHub Pages (or just to check validity)
   build-nightly:
-    needs:
-      - build
-      - build-msrv
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -126,11 +123,15 @@ jobs:
         if: github.event_name == 'push' && github.ref_type == 'branch'
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
+        if: github.event_name == 'push' && github.ref_type == 'branch'
         with:
           path: 'target/doc'
 
   deploy-pages:
-    needs: build-nightly
+    needs:
+      - build
+      - build-msrv
+      - build-nightly
     if: github.event_name == 'push' && github.ref_type == 'branch'
     permissions:
       pages: write
