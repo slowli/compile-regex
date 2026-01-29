@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  # Minimum supported Rust version.
+  msrv: 1.85.0
+  # Nightly Rust necessary for building docs.
+  nightly: nightly-2025-11-02
+
+jobs:
+  build-msrv:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.msrv }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-msrv-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}msrv-cargo
+
+      - name: Build library
+        run: cargo build -p compile-regex --lib --all-features
+      - name: Build library (no-std)
+        run: cargo build -p compile-regex --lib --no-default-features
+      - name: Build library (alloc)
+        run: cargo build -p compile-regex --lib --no-default-features --features=alloc
+
+  build:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Install cargo-deny
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-deny
+          version: "^0.18.5"
+
+      - name: Cache cargo build
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo
+
+      - name: Format
+        run: cargo fmt --all -- --check --config imports_granularity=Crate --config group_imports=StdExternalCrate
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - name: Clippy (no-std)
+        run: cargo clippy -p compile-regex --lib --no-default-features -- -D warnings
+      - name: Clippy (alloc)
+        run: cargo clippy -p compile-regex --lib --no-default-features --features=alloc -- -D warnings
+
+      - name: Check dependencies
+        run: cargo deny --workspace --all-features check
+
+      - name: Run tests
+        run: cargo test --workspace --all-features --all-targets
+      - name: Run doc tests
+        run: cargo test --workspace --all-features --doc
+      - name: Fuzz
+        run: cargo test --release -p compile-regex --test fuzz
+        env:
+          PROPTEST_CASES: 1000000
+
+  # Also builds crate docs for deployment to GitHub Pages (or just to check validity)
+  build-nightly:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.nightly }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-nightly-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-build-nightly
+
+      - name: Build library
+        run: cargo build -p compile-regex --lib --all-features
+
+      - name: Build docs
+        run: |
+          cargo clean --doc && \
+          cargo rustdoc -p compile-regex --all-features -- -D warnings --cfg docsrs
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        with:
+          path: 'target/doc'
+
+  deploy-pages:
+    needs:
+      - build
+      - build-msrv
+      - build-nightly
+    if: github.event_name == 'push' && github.ref_type == 'branch'
+    permissions:
+      pages: write
+      id-token: write
+
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

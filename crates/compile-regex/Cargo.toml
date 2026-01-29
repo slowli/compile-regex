@@ -7,7 +7,14 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
-description = "Compile-time regular expression validation"
+description = "Compile-time regular expression validation and parsing"
+categories = ["text-processing", "parser-implementations", "no-std"]
+keywords = ["regex", "compile-time", "validation", "parsing"]
+
+[package.metadata.docs.rs]
+all-features = true
+# Set `docsrs` to enable unstable `doc(cfg(...))` attributes.
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 compile-fmt.workspace = true
