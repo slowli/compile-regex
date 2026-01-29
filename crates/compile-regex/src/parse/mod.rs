@@ -17,6 +17,29 @@ use crate::{
 mod tests;
 
 /// Regular expression parsing options.
+///
+/// # Examples
+///
+/// Initializing a regex with the "ignore whitespace" flag enabled:
+///
+/// ```
+/// use compile_regex::{ast::{Node, Syntax}, RegexOptions};
+///
+/// const SYNTAX: Syntax = RegexOptions::DEFAULT
+///     .ignore_whitespace(true)
+///     .parse(r"(?<digits> # This is a comment
+///         [ \d - ]+ # since `-` is a last non-whitespace char in a set,
+///                   ## it's a literal '-'
+///     )");
+///
+/// let comment_count = SYNTAX
+///     .iter()
+///     .filter(|spanned| matches!(spanned.node, Node::Comment))
+///     .count();
+/// // Sequential comments are glued together, so the number of comment nodes is 2
+/// // rather than 3.
+/// assert_eq!(comment_count, 2);
+/// ```
 #[derive(Debug, Default)]
 pub struct RegexOptions {
     ignore_whitespace: bool,
