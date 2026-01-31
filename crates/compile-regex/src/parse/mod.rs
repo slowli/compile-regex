@@ -8,7 +8,7 @@ use self::types::{Backup, GroupFrame, GroupNames, SyntaxOrLen};
 use crate::{
     ast::{Node, Span, Spanned, Syntax},
     utils::{ceil_char_boundary, is_char_boundary, split_first_char, Stack},
-    Error, ErrorKind,
+    Error, ErrorKind, Parsed,
 };
 
 mod escapes;
@@ -115,12 +115,17 @@ impl RegexOptions {
     /// - Returns an error if the provided `regex` is not a valid regular expression.
     /// - Errors if one of internal limits is hit (e.g., the number of [syntax spans](Spanned)
     ///   or the number of named captures).
-    pub const fn try_parse<const CAP: usize>(&self, regex: &str) -> Result<Syntax<CAP>, Error> {
+    pub const fn try_parse<'r, const CAP: usize>(
+        &self,
+        regex: &'r str,
+    ) -> Result<Parsed<'r, Syntax<CAP>>, Error> {
         let mut state = ParseState::custom(regex, self, true);
         loop {
             match state.step() {
                 Err(err) => return Err(err),
-                Ok(ops::ControlFlow::Break(())) => return Ok(state.into_syntax()),
+                Ok(ops::ControlFlow::Break(())) => {
+                    return Ok(Parsed::new_unchecked(regex, state.into_syntax()))
+                }
                 Ok(ops::ControlFlow::Continue(())) => { /* continue */ }
             }
         }
@@ -133,7 +138,7 @@ impl RegexOptions {
     ///
     /// Panics in the same situations in which [`Self::try_parse()`] returns an error.
     #[track_caller]
-    pub const fn parse<const CAP: usize>(&self, regex: &str) -> Syntax<CAP> {
+    pub const fn parse<'r, const CAP: usize>(&self, regex: &'r str) -> Parsed<'r, Syntax<CAP>> {
         match self.try_parse(regex) {
             Ok(spans) => spans,
             Err(err) => err.compile_panic(regex),
@@ -147,7 +152,7 @@ impl RegexOptions {
     /// Returns an error if the provided `regex` is not a valid regular expression.
     #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[cfg(feature = "alloc")]
-    pub fn try_parse_to_vec(&self, regex: &str) -> Result<crate::alloc::Vec<Spanned>, Error> {
+    pub fn try_parse_to_vec<'r>(&self, regex: &'r str) -> Result<Parsed<'r, Vec<Spanned>>, Error> {
         use core::mem;
 
         use crate::alloc::Vec;
@@ -172,7 +177,7 @@ impl RegexOptions {
             syntax.extend_from_slice(new_syntax.as_slice());
 
             if step_result.is_break() {
-                return Ok(syntax);
+                return Ok(Parsed::new_unchecked(regex, syntax));
             }
         }
     }
@@ -474,7 +479,7 @@ impl<'a, const CAP: usize> ParseState<'a, CAP> {
             '|' => {
                 // Gobble the alteration.
                 self.pos += 1;
-                const_try!(self.push_ast(self.pos - 1, Node::Alteration));
+                const_try!(self.push_ast(self.pos - 1, Node::Alternation));
                 self.is_empty_last_item = true;
             }
             '[' => {

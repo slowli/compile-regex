@@ -448,7 +448,7 @@ fn parsing_set_with_whitespace() {
             .ignore_whitespace(true)
             .try_parse::<16>(set)
             .unwrap();
-        let ast = ast.as_slice();
+        let ast = ast.syntax();
         assert_matches!(ast[0].node, Node::SetStart { .. });
         assert_eq!(ast[0].span.start, 0);
 

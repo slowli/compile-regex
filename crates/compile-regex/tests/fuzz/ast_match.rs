@@ -94,7 +94,7 @@ impl<'a> SpansCollector<'a> {
             alt_char_pos += prev.span().end.offset;
 
             self.spans.push(c_ast::Spanned {
-                node: c_ast::Node::Alteration,
+                node: c_ast::Node::Alternation,
                 span: c_ast::Span::new(alt_char_pos, alt_char_pos + 1),
             });
         }
@@ -316,7 +316,7 @@ fn matching_asts_manual() {
     for regex in regexes {
         let ast = Parser::new().parse(regex).unwrap();
         let actual = RegexOptions::DEFAULT.try_parse_to_vec(regex).unwrap();
-        assert_asts_match(regex, &ast, actual);
+        assert_asts_match(regex, &ast, actual.into_syntax());
     }
 }
 
@@ -331,7 +331,7 @@ fn test_regex_ast(ast_str: &str) {
 
     match RegexOptions::DEFAULT.try_parse_to_vec(ast_str) {
         Ok(parsed_ast) => {
-            assert_asts_match(ast_str, &ast, parsed_ast);
+            assert_asts_match(ast_str, &ast, parsed_ast.into_syntax());
         }
         Err(err) => {
             assert_matches!(

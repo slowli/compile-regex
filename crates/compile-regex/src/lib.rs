@@ -123,6 +123,7 @@
 pub use crate::{
     errors::{Error, ErrorKind},
     parse::{RegexOptions, ValidationOutput},
+    parsed::Parsed,
     utils::Stack,
 };
 
@@ -131,6 +132,7 @@ mod utils;
 pub mod ast;
 mod errors;
 mod parse;
+mod parsed;
 #[cfg(test)]
 mod tests;
 

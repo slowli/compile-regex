@@ -1,6 +1,6 @@
 //! Bounded stack implementation with `const fn`s.
 
-use core::{fmt, slice};
+use core::{fmt, ops, slice};
 
 #[derive(Debug)]
 pub(crate) struct PushError;
@@ -80,6 +80,14 @@ impl<T, const N: usize> Stack<T, N> {
 
 impl<T, const N: usize> AsRef<[T]> for Stack<T, N> {
     fn as_ref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T, const N: usize> ops::Deref for Stack<T, N> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
         self.as_slice()
     }
 }
