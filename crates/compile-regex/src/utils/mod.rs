@@ -149,7 +149,7 @@ impl RawStr<'_> {
 
 #[cfg(test)]
 mod tests {
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
 
     use super::*;
 

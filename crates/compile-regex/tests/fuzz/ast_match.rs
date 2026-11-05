@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use arbitrary::{Arbitrary, Unstructured};
 use assert_matches::assert_matches;
 use compile_regex::{ast as c_ast, ErrorKind, RegexOptions};
-use rand::{prelude::StdRng, Rng, SeedableRng};
+use rand::{prelude::StdRng, RngExt, SeedableRng};
 use regex_syntax::{
     ast,
     ast::{parse::Parser, Ast},

@@ -11,7 +11,7 @@ use std::{env, ops};
 
 use arbitrary::{Arbitrary, Unstructured};
 use compile_regex::{try_validate, Error, ErrorKind, RegexOptions};
-use rand::{rngs::StdRng, seq::IteratorRandom, Rng, SeedableRng};
+use rand::{rngs::StdRng, seq::IteratorRandom, RngExt, SeedableRng};
 use regex_syntax::ast::{
     self,
     parse::{Parser, ParserBuilder},
