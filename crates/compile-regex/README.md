@@ -41,7 +41,7 @@ compile-regex = "0.1.0"
 Example of usage:
 
 ```rust
-use compile_regex::{ast, parse, validate};
+use compile_regex::{ast, parse, validate, Parsed};
 
 // Validate a simple regex for phone numbers.
 const _: () = validate(r"(?<code>\+1\s*)?\(\d{3}\)\d{3}-\d{4}");
@@ -51,9 +51,9 @@ const PHONE_REGEX: &str = r"(?x)
     (?<city> \( \d{3} \)) # City code
     \s*
     (?<num> \d{3}-\d{4})";
-const SYNTAX: &[ast::Spanned] = parse!(PHONE_REGEX);
+const REGEX: Parsed = parse!(PHONE_REGEX);
 
-println!("{SYNTAX:#?}");
+println!("{REGEX:#?}");
 ```
 
 See the crate docs for more examples.

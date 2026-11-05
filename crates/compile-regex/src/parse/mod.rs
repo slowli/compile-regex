@@ -34,16 +34,17 @@ pub struct ValidationOutput {
 /// Initializing a regex with the "ignore whitespace" flag enabled:
 ///
 /// ```
-/// use compile_regex::{ast::{Node, Syntax}, RegexOptions};
+/// use compile_regex::{ast::{Node, Syntax}, Parsed, RegexOptions};
 ///
-/// const SYNTAX: Syntax = RegexOptions::DEFAULT
+/// const REGEX: Parsed<Syntax> = RegexOptions::DEFAULT
 ///     .ignore_whitespace(true)
 ///     .parse(r"(?<digits> # This is a comment
 ///         [ \d - ]+ # since `-` is a last non-whitespace char in a set,
 ///                   ## it's a literal '-'
 ///     )");
 ///
-/// let comment_count = SYNTAX
+/// let comment_count = REGEX
+///     .syntax()
 ///     .iter()
 ///     .filter(|spanned| matches!(spanned.node, Node::Comment))
 ///     .count();

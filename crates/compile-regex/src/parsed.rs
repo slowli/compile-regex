@@ -71,6 +71,23 @@ impl<'a> DebugNode<'a> {
 
 /// Parsed regular expression consisting of an original string and the linearized syntax tree
 /// (parametric, usually a slice of [`Spanned`] AST nodes).
+///
+/// # Debugging
+///
+/// You may use the alternate debugging representation `{:#?}` to check how the expression is parsed:
+///
+/// ```
+/// use compile_regex::{parse, Parsed};
+///
+/// const REGEX: Parsed = parse!(r"^\s*\d{3,5}?");
+/// assert_eq!(format!("{REGEX:#?}"), r#"{
+///     r"^": LineAssertion,
+///     r"\s": PerlClass,
+///     r"*": UncountedRepetition,
+///     r"\d": PerlClass,
+///     r"{3,5}?": CountedRepetition,
+/// }"#);
+/// ```
 #[derive(Clone, Copy)]
 pub struct Parsed<'a, T = &'a [Spanned]> {
     regex: &'a str,
