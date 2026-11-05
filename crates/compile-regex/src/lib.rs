@@ -108,7 +108,7 @@
 //! [`regex-syntax`]: https://docs.rs/regex-syntax/
 
 // Conditional compilation
-#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(any(test, doc)), no_std)]
 // Documentation settings
 #![doc(html_root_url = "https://docs.rs/compile-regex/0.1.0")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
