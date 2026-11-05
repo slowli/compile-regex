@@ -31,8 +31,6 @@ version-sync.workspace = true
 workspace = true
 
 [features]
-default = ["std"]
+default = ["alloc"]
 # Enables support of alloc types, such as `Vec`.
 alloc = []
-# Enables support of the standard library types, e.g. the `Error` trait implementation.
-std = ["alloc"]

@@ -10,7 +10,7 @@ env:
   # Minimum supported Rust version.
   msrv: 1.85.0
   # Nightly Rust necessary for building docs.
-  nightly: nightly-2025-11-02
+  nightly: nightly-2026-11-04
 
 jobs:
   build-msrv:
@@ -37,8 +37,6 @@ jobs:
         run: cargo build -p compile-regex --lib --all-features
       - name: Build library (no-std)
         run: cargo build -p compile-regex --lib --no-default-features
-      - name: Build library (alloc)
-        run: cargo build -p compile-regex --lib --no-default-features --features=alloc
 
   build:
     permissions:
@@ -57,7 +55,7 @@ jobs:
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-deny
-          version: "^0.18.5"
+          version: "^0.20"
 
       - name: Cache cargo build
         uses: actions/cache@v5

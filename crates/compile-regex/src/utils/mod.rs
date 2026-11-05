@@ -1,5 +1,7 @@
 //! General-purpose utils.
 
+use core::fmt;
+
 pub use self::stack::Stack;
 
 mod stack;
@@ -97,9 +99,57 @@ pub(crate) const fn is_char_boundary(ch: u8) -> bool {
     ch & UTF8_CONTINUATION_MASK != UTF8_CONTINUATION_MARKER
 }
 
+/// Wrapper for strings that outputs a string as a raw string literal, like `r"\s+"`.
+#[derive(Clone, Copy)]
+pub(crate) struct RawStr<'a>(pub(crate) &'a str);
+
+impl fmt::Debug for RawStr<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
+}
+
+impl fmt::Display for RawStr<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hash_count = self.hash_count();
+        write!(formatter, "r")?;
+        for _ in 0..hash_count {
+            write!(formatter, "#")?;
+        }
+        write!(formatter, "\"{}\"", self.0)?;
+        for _ in 0..hash_count {
+            write!(formatter, "#")?;
+        }
+        Ok(())
+    }
+}
+
+impl RawStr<'_> {
+    // Determine the number of necessary `#` for the raw string specifier.
+    fn hash_count(self) -> usize {
+        let has_double_quotes = self.0.chars().any(|ch| ch == '"');
+        if has_double_quotes {
+            let mut max_hashes = 0;
+            let mut hash_start = None;
+            for (i, ch) in self.0.chars().enumerate() {
+                if ch == '#' {
+                    if hash_start.is_none() {
+                        hash_start = Some(i);
+                    }
+                } else if let Some(hash_start) = hash_start.take() {
+                    max_hashes = max_hashes.max(i - hash_start);
+                }
+            }
+            max_hashes + 1
+        } else {
+            0
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, RngExt, SeedableRng};
 
     use super::*;
 
@@ -134,5 +184,24 @@ mod tests {
                 assert!(!s.is_char_boundary(i));
             }
         }
+    }
+
+    #[test]
+    fn hash_count_for_raw_strings_is_correct() {
+        let s = RawStr("Hello, world!");
+        assert_eq!(s.hash_count(), 0);
+        assert_eq!(s.to_string(), "r\"Hello, world!\"");
+
+        let s = RawStr("####");
+        assert_eq!(RawStr("####").hash_count(), 0);
+        assert_eq!(s.to_string(), "r\"####\"");
+
+        let s = RawStr(r#"x="1""#);
+        assert_eq!(s.hash_count(), 1);
+        assert_eq!(s.to_string(), "r#\"x=\"1\"\"#");
+
+        let s = RawStr(r##"x="#1""##);
+        assert_eq!(s.hash_count(), 2);
+        assert_eq!(s.to_string(), "r##\"x=\"#1\"\"##");
     }
 }

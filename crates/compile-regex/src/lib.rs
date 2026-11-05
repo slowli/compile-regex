@@ -45,17 +45,10 @@
 //!
 //! Enables support of alloc types, such as [`Vec`] in [`RegexOptions::try_parse_to_vec()`].
 //!
-//! ## `std`
-//!
-//! *(On by default)*
-//!
-//! Enables support of the standard library types, e.g. the [`Error`](std::error::Error) trait implementation
-//! for [`Error`].
-//!
 //! # Examples
 //!
 //! ```
-//! use compile_regex::{ast, parse, validate};
+//! use compile_regex::{ast, parse, validate, Parsed};
 //!
 //! // Validate a regex for phone numbers.
 //! const _: () = validate(r"(?<code>\+1\s*)?\(\d{3}\)\d{3}-\d{4}");
@@ -65,12 +58,12 @@
 //!     (?<city> \( \d{3} \)) # City code
 //!     \s*
 //!     (?<num> \d{3}-\d{4})";
-//! const SYNTAX: &[ast::Spanned] = parse!(PHONE_REGEX);
+//! const REGEX: Parsed = parse!(PHONE_REGEX);
 //!
-//! println!("{SYNTAX:#?}");
+//! println!("{REGEX:#?}");
 //!
 //! // Get all named groups in the regex.
-//! let group_names = SYNTAX.iter().filter_map(|spanned| {
+//! let group_names = REGEX.syntax().iter().filter_map(|spanned| {
 //!     if let ast::Node::GroupStart { name: Some(name), .. } = &spanned.node {
 //!         return Some(&PHONE_REGEX[name.name]);
 //!     }
@@ -115,14 +108,18 @@
 //! [`regex-syntax`]: https://docs.rs/regex-syntax/
 
 // Conditional compilation
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(any(test, doc)), no_std)]
 // Documentation settings
 #![doc(html_root_url = "https://docs.rs/compile-regex/0.1.0")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub use crate::{
     errors::{Error, ErrorKind},
     parse::{RegexOptions, ValidationOutput},
+    parsed::Parsed,
     utils::Stack,
 };
 
@@ -131,17 +128,9 @@ mod utils;
 pub mod ast;
 mod errors;
 mod parse;
+mod parsed;
 #[cfg(test)]
 mod tests;
-
-/// `alloc` re-exports.
-#[cfg(feature = "alloc")]
-mod alloc {
-    #[cfg(not(feature = "std"))]
-    extern crate alloc as std;
-
-    pub(crate) use std::vec::Vec;
-}
 
 /// Tries to validate the provided regular expression with the default [options](RegexOptions).
 ///
@@ -177,14 +166,15 @@ pub const fn validate(regex: &str) {
 /// # Examples
 ///
 /// ```
-/// use compile_regex::{ast, parse};
+/// use compile_regex::{ast, parse, Parsed};
 /// # use assert_matches::assert_matches;
 ///
-/// const SYNTAX: &[ast::Spanned] = parse!(r"^\s*\d{3,5}?");
+/// const REGEX: Parsed = parse!(r"^\s*\d{3,5}?");
 ///
-/// assert_eq!(SYNTAX.len(), 5);
-/// assert_matches!(SYNTAX[0].node, ast::Node::LineAssertion); // ^
-/// assert_matches!(SYNTAX[4].node, ast::Node::CountedRepetition(_)); // {3,5}?
+/// let syntax = REGEX.syntax();
+/// assert_eq!(syntax.len(), 5);
+/// assert_matches!(syntax[0].node, ast::Node::LineAssertion); // ^
+/// assert_matches!(syntax[4].node, ast::Node::CountedRepetition(_)); // {3,5}?
 /// ```
 ///
 /// ## Use with `RegexOptions`
@@ -192,16 +182,17 @@ pub const fn validate(regex: &str) {
 /// The macro optionally accepts parsing options.
 ///
 /// ```
-/// use compile_regex::{ast, parse, RegexOptions};
+/// use compile_regex::{ast, parse, Parsed, RegexOptions};
 ///
-/// const SYNTAX: &[ast::Spanned] = parse!(
+/// const REGEX: Parsed = parse!(
 ///     options: RegexOptions::DEFAULT.ignore_whitespace(true),
 ///     r"(?<digits> # This is a comment :) so the closing brace should be ignored
 ///         [0- 9]+ # without ignoring whitespace, this range would be invalid
 ///     )"
 /// );
 ///
-/// assert!(SYNTAX
+/// assert!(REGEX
+///     .syntax()
 ///     .iter()
 ///     .any(|spanned| matches!(spanned.node, ast::Node::SetRange)));
 /// ```

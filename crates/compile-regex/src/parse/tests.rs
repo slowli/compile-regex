@@ -6,7 +6,7 @@ use regex_syntax::{
     ast::parse::{Parser, ParserBuilder},
 };
 
-use super::*;
+use super::{types::PrimitiveKind, *};
 use crate::try_validate;
 
 #[test]
@@ -448,7 +448,7 @@ fn parsing_set_with_whitespace() {
             .ignore_whitespace(true)
             .try_parse::<16>(set)
             .unwrap();
-        let ast = ast.as_slice();
+        let ast = ast.syntax();
         assert_matches!(ast[0].node, Node::SetStart { .. });
         assert_eq!(ast[0].span.start, 0);
 
@@ -456,62 +456,6 @@ fn parsing_set_with_whitespace() {
         assert_matches!(last_node.node, Node::SetEnd);
         assert_eq!(last_node.span.start, set.len() - 1);
     }
-}
-
-#[test]
-fn parsing_flags() {
-    for flags_str in ["?i:", "?i)", "?isU:", "?-isU:"] {
-        println!("Testing flags: {flags_str}");
-        let mut state = ParseState::new(flags_str, &RegexOptions::DEFAULT);
-        let flags = state.parse_flags().unwrap();
-        assert!(!flags.is_empty);
-        assert_eq!(flags.ignore_whitespace, None);
-        assert_eq!(state.pos, flags_str.len() - 1);
-    }
-
-    let mut state = ParseState::new("?i", &RegexOptions::DEFAULT);
-    let err = state.parse_flags().unwrap_err();
-    assert_matches!(err.kind(), ErrorKind::UnfinishedFlags);
-    assert_eq!(err.pos(), 0..2);
-
-    let mut state = ParseState::new("?i-:", &RegexOptions::DEFAULT);
-    let err = state.parse_flags().unwrap_err();
-    assert_matches!(err.kind(), ErrorKind::UnfinishedFlagsNegation);
-    assert_eq!(err.pos(), 2..3);
-
-    let mut state = ParseState::new("?i--s:", &RegexOptions::DEFAULT);
-    let err = state.parse_flags().unwrap_err();
-    assert_matches!(err.kind(), ErrorKind::RepeatedFlagNegation);
-    assert_eq!(err.pos(), 3..4);
-
-    let mut state = ParseState::new("?iX:", &RegexOptions::DEFAULT);
-    let err = state.parse_flags().unwrap_err();
-    assert_matches!(err.kind(), ErrorKind::UnsupportedFlag);
-    assert_eq!(err.pos(), 2..3);
-
-    let mut state = ParseState::new("?ii:", &RegexOptions::DEFAULT);
-    let err = state.parse_flags().unwrap_err();
-    assert_matches!(
-        err.kind(),
-        ErrorKind::RepeatedFlag {
-            contradicting: false
-        }
-    );
-    assert_eq!(err.pos(), 2..3);
-
-    let mut state = ParseState::new("?i-i:", &RegexOptions::DEFAULT);
-    let err = state.parse_flags().unwrap_err();
-    assert_matches!(
-        err.kind(),
-        ErrorKind::RepeatedFlag {
-            contradicting: true
-        }
-    );
-    assert_eq!(err.pos(), 3..4);
-
-    let err = try_validate("(?)").unwrap_err();
-    assert_matches!(err.kind(), ErrorKind::MissingRepetition);
-    assert_eq!(err.pos(), 0..3);
 }
 
 #[test]

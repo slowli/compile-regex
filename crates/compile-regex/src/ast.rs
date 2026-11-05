@@ -86,8 +86,8 @@ pub enum Node {
     /// Hexadecimal escape, like `\x0C` or `\u{123}`.
     HexEscape,
 
-    /// Alteration char (`|`).
-    Alteration,
+    /// Alternation char (`|`).
+    Alternation,
     /// Group start `(` together with optional flags and naming.
     GroupStart {
         /// Group name.
