@@ -1,11 +1,11 @@
 //! Syntax highlighting for regular expressions.
 
-#![allow(missing_docs)] // FIXME
-
 use core::ops;
 
 use crate::ast::{Spanned, Syntax};
 
+/// Parsed regular expression consisting of an original string and the linearized syntax tree
+/// (parametric, usually a slice of [`Spanned`] AST nodes).
 #[derive(Debug, Clone, Copy)] // TODO: custom debug?
 pub struct Parsed<'a, T = &'a [Spanned]> {
     regex: &'a str,
@@ -18,10 +18,12 @@ impl<'a, T: ops::Deref<Target = [Spanned]>> Parsed<'a, T> {
         Self { regex, syntax }
     }
 
+    /// Returns a reference to the underlying syntax nodes.
     pub fn syntax(&self) -> &[Spanned] {
         &self.syntax
     }
 
+    /// Extract underlying syntax nodes.
     // TODO: this cannot be a `const fn` because of possible `Drop` impl, which doesn't make sense
     pub fn into_syntax(self) -> T {
         self.syntax
