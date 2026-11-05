@@ -37,8 +37,6 @@ jobs:
         run: cargo build -p compile-regex --lib --all-features
       - name: Build library (no-std)
         run: cargo build -p compile-regex --lib --no-default-features
-      - name: Build library (alloc)
-        run: cargo build -p compile-regex --lib --no-default-features --features=alloc
 
   build:
     permissions:

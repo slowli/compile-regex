@@ -45,13 +45,6 @@
 //!
 //! Enables support of alloc types, such as [`Vec`] in [`RegexOptions::try_parse_to_vec()`].
 //!
-//! ## `std`
-//!
-//! *(On by default)*
-//!
-//! Enables support of the standard library types, e.g. the [`Error`](std::error::Error) trait implementation
-//! for [`Error`].
-//!
 //! # Examples
 //!
 //! ```
@@ -115,10 +108,13 @@
 //! [`regex-syntax`]: https://docs.rs/regex-syntax/
 
 // Conditional compilation
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(test), no_std)]
 // Documentation settings
 #![doc(html_root_url = "https://docs.rs/compile-regex/0.1.0")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 pub use crate::{
     errors::{Error, ErrorKind},
@@ -135,15 +131,6 @@ mod parse;
 mod parsed;
 #[cfg(test)]
 mod tests;
-
-/// `alloc` re-exports.
-#[cfg(feature = "alloc")]
-mod alloc {
-    #[cfg(not(feature = "std"))]
-    extern crate alloc as std;
-
-    pub(crate) use std::vec::Vec;
-}
 
 /// Tries to validate the provided regular expression with the default [options](RegexOptions).
 ///

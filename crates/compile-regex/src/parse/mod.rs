@@ -2,6 +2,8 @@
 //!
 //! <https://github.com/rust-lang/regex/blob/master/regex-syntax/src/ast/parse.rs>
 
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use core::ops;
 
 use self::types::{Backup, GroupFrame, GroupNames, SyntaxOrLen};
@@ -155,8 +157,6 @@ impl RegexOptions {
     #[cfg(feature = "alloc")]
     pub fn try_parse_to_vec<'r>(&self, regex: &'r str) -> Result<Parsed<'r, Vec<Spanned>>, Error> {
         use core::mem;
-
-        use crate::alloc::Vec;
 
         /// Max number of AST spans added during a single parsing step. This is roughly
         /// 2x the max number of "main" / non-comment spans that can be added on a single step
